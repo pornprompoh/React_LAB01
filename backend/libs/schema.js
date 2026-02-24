@@ -52,7 +52,10 @@ const deviceSchema = new Schema({
   emailTo: String,
   status: String,
   revision: Number, 
-  tags: [tagSchema], 
+  tags: [tagSchema],
+  showChart: Boolean, // เปิดกราฟทิ้งไว้
+  chartX: Number,     // พิกัดแกน X ของกราฟ
+  chartY: Number,     // พิกัดแกน Y ของกราฟ 
 })
 
 module.exports = {
