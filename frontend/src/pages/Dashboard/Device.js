@@ -12,7 +12,6 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import FileCopyIcon from '@mui/icons-material/FileCopy'
 
-// ไอคอนสำหรับฝั่ง Tools Dashboard
 import TextFieldsIcon from '@mui/icons-material/TextFields'
 import InsertChartIcon from '@mui/icons-material/InsertChart'
 import SpeedIcon from '@mui/icons-material/Speed'
@@ -42,10 +41,7 @@ const DevicePage = () => {
   const [saving, setSaving] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState(false) 
   
-  // --- [เพิ่ม State] สำหรับสลับหน้าต่าง DEVICES กับ DASHBOARD ---
   const [activeTab, setActiveTab] = useState('devices') 
-
-  // --- [เพิ่ม State] สำหรับระบบลากวาง (Drag & Drop) ---
   const [draggingIdx, setDraggingIdx] = useState(null)
   const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 })
   
@@ -56,6 +52,7 @@ const DevicePage = () => {
     status: 'Active', revision: 1, tags: [] 
   })
 
+  const [originalDevice, setOriginalDevice] = useState(null)
   const [tagResults, setTagResults] = useState({})
   const [tagErrors, setTagErrors] = useState({})
 
@@ -72,7 +69,6 @@ const DevicePage = () => {
     tagsRef.current = device.tags
   }, [device.tags])
 
-  // Real-time Script Loop
   useEffect(() => {
     let isMounted = true;
     const intervalId = setInterval(async () => {
@@ -106,7 +102,6 @@ const DevicePage = () => {
     };
   }, []);
 
-  // Fetch Data
   useEffect(() => {
     if (isCreateMode) {
       setDevice(prev => ({ ...prev, tags: [] }))
@@ -127,7 +122,9 @@ const DevicePage = () => {
         if (json && json.length > 0) {
           let loadedDevice = json[0];
           if (!loadedDevice.tags) loadedDevice.tags = [];
+          
           setDevice(loadedDevice)
+          setOriginalDevice(JSON.parse(JSON.stringify(loadedDevice)))
         } else {
           alert('Device not found')
           navigate('/dashboard')
@@ -141,7 +138,6 @@ const DevicePage = () => {
     fetchData()
   }, [id, navigate, isCreateMode])
 
-  // --- Handlers ข้อมูล ---
   const handleChange = (e) => {
     const { name, value } = e.target
     setDevice(prev => ({ ...prev, [name]: value }))
@@ -167,32 +163,56 @@ const DevicePage = () => {
     }
   }
 
-  // --- [ปรับปรุง] ระบบบันทึก (พิกัดการลากจะถูกเซฟด้วย) ---
+  // --- [ปรับปรุง] แยกระบบ SAVE ตามหน้า (Tabs) ---
   const handleSave = async () => {
     try {
       if (!device._id || !device.name) { alert('Please fill ID and Name'); return }
+
+      // เช็คว่ามีการเปลี่ยนแปลงข้อมูลหรือไม่ (เอาไว้กันเหนียว)
+      const currentStr = JSON.stringify(device);
+      const originalStr = originalDevice ? JSON.stringify(originalDevice) : null;
+      const isDataChanged = !originalDevice || currentStr !== originalStr;
+
+      let dataToSave = { ...device };
+
+      // ===============================================
+      // กรณี 1: กด Save จากหน้าต่าง DASHBOARD (เซฟแค่พิกัด)
+      // ===============================================
+      if (activeTab === 'dashboard') {
+        if (!isDataChanged) {
+          alert('No layout changes to save.'); // ถ้าไม่ได้ขยับกล่องเลย ไม่ต้องส่งไปเซฟ
+          return;
+        }
+        dataToSave.revision = (Number(dataToSave.revision) || 1) + 1;
+        // ไม่มีการเพิ่ม tags ใหม่ที่นี่ !
+      } 
+      // ===============================================
+      // กรณี 2: กด Save จากหน้าต่าง DEVICES (บันทึกข้อมูล + งอก Tag)
+      // ===============================================
+      else {
+        if (!isDataChanged && !isCreateMode) {
+          const confirmNewTag = window.confirm('ข้อมูลไม่มีการเปลี่ยนแปลง\nต้องการสร้าง Tag ใหม่เพิ่ม 1 อัน ใช่หรือไม่?');
+          if (!confirmNewTag) return;
+        }
+
+        dataToSave.revision = isCreateMode ? 1 : (Number(dataToSave.revision) || 1) + 1; 
+
+        // งอก Tag ใหม่ 1 อัน
+        const nextTagNumber = dataToSave.tags.length + 1;
+        const autoNewTag = { 
+          label: `tag${nextTagNumber}`, script: '', updateInterval: '1min', 
+          record: true, sync: true, api: false, line: false, email: false, 
+          alarm: 'Off', spLow: '25', spHigh: '35', critical: 'Low', title: '', alert: '', description: '',
+          x: 100 + (nextTagNumber * 20), y: 100 + (nextTagNumber * 20)  
+        };
+        dataToSave.tags = [...dataToSave.tags, autoNewTag];
+      }
+
+      // --- ส่วนยิง API ไปบันทึกลง Database ---
       setSaving(true)
       const auth = getAuth()
-      
-      let dataToSave = { ...device };
-      dataToSave.revision = isCreateMode ? 1 : (Number(dataToSave.revision) || 1) + 1; 
-
-      // สร้าง Tag ใหม่ พร้อมพิกัดเริ่มต้นตรงกลางจอ
-      const nextTagNumber = dataToSave.tags.length + 1;
-      const autoNewTag = { 
-        label: `tag${nextTagNumber}`, 
-        script: '', 
-        updateInterval: '1min', 
-        record: true, sync: true, api: false, line: false, email: false, 
-        alarm: 'Off', spLow: '25', spHigh: '35', critical: 'Low',
-        title: '', alert: '', description: '',
-        x: 100 + (nextTagNumber * 20), // ตั้งพิกัด X เริ่มต้น
-        y: 100 + (nextTagNumber * 20)  // ตั้งพิกัด Y เริ่มต้น
-      };
-
-      dataToSave.tags = [...dataToSave.tags, autoNewTag];
-
       const url = isCreateMode ? '/api/preferences/createDocument' : '/api/preferences/updateDocument'
+      
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'authorization': auth.token },
@@ -202,8 +222,21 @@ const DevicePage = () => {
       const json = await resp.json()
       if (json.error) throw new Error(json.error)
 
-      alert('Saved Device & Generated a new Tag successfully!')
-      navigate('/dashboard') 
+      setDevice(dataToSave)
+      setOriginalDevice(JSON.parse(JSON.stringify(dataToSave))) // อัปเดตภาพจำต้นฉบับ
+
+      // การแจ้งเตือนแยกตามหน้า
+      if (activeTab === 'dashboard') {
+        alert('Dashboard layout saved successfully!');
+      } else {
+        if (isCreateMode) {
+          navigate(`/dashboard/${dataToSave._id}`, { replace: true })
+          alert('Device created! You can continue editing.')
+        } else {
+          alert('Saved Device & Generated a new Tag successfully!')
+        }
+      }
+
     } catch (error) {
       alert('Error saving data: ' + error.message)
     } finally {
@@ -248,6 +281,8 @@ const DevicePage = () => {
       if (json.error) throw new Error(json.error);
 
       setDevice(dataToSave);
+      setOriginalDevice(JSON.parse(JSON.stringify(dataToSave))); 
+      
       setTagResults({}); setTagErrors({});
       alert('Tag deleted and reordered successfully!');
     } catch (error) {
@@ -257,9 +292,7 @@ const DevicePage = () => {
     }
   }
 
-  // --- [ฟังก์ชัน] ระบบลากวาง (Drag & Drop) ---
   const handleMouseDown = (e, index) => {
-    // ป้องกันการเลือกข้อความระหว่างลาก
     e.preventDefault();
     setDraggingIdx(index);
     setDragStartPos({ x: e.clientX, y: e.clientY });
@@ -267,15 +300,10 @@ const DevicePage = () => {
 
   const handleMouseMove = (e) => {
     if (draggingIdx === null) return;
-    
-    // คำนวณระยะที่เมาส์ขยับ
     const dx = e.clientX - dragStartPos.x;
     const dy = e.clientY - dragStartPos.y;
-    
-    // จำค่าเมาส์ล่าสุด
     setDragStartPos({ x: e.clientX, y: e.clientY });
 
-    // อัปเดตพิกัด X Y ของ Tag นั้น
     const newTags = [...device.tags];
     newTags[draggingIdx].x = (newTags[draggingIdx].x || 50) + dx;
     newTags[draggingIdx].y = (newTags[draggingIdx].y || 50) + dy;
@@ -299,12 +327,10 @@ const DevicePage = () => {
     <Page pageTitle={`Sites - ${device._id || 'New'}`}>
       <Box sx={{ padding: '0', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', bgcolor: '#fff' }}>
         
-        {/* --- Top Header (มีปุ่ม Tabs DEVICES / DASHBOARD) --- */}
         <Box sx={{ px: 4, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #ddd' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <IconButton onClick={() => navigate('/dashboard')} size="small" sx={{ mr: -2 }}><ArrowBackIcon /></IconButton>
             
-            {/* Tab: DEVICES */}
             <Typography 
               onClick={() => setActiveTab('devices')} 
               variant="subtitle1" 
@@ -313,7 +339,6 @@ const DevicePage = () => {
               DEVICES
             </Typography>
 
-            {/* Tab: DASHBOARD */}
             <Typography 
               onClick={() => setActiveTab('dashboard')} 
               variant="subtitle1" 
@@ -331,10 +356,6 @@ const DevicePage = () => {
           </Box>
         </Box>
 
-
-        {/* =========================================
-            โซนที่ 1: หน้าต่าง DEVICES (เหมือนเดิม)
-            ========================================= */}
         {activeTab === 'devices' && (
           <Box sx={{ p: 4, overflowY: 'auto', flex: 1 }}>
             <Typography variant="body2" sx={{ color: '#666', mb: 3 }}>{isCreateMode ? 'Add New Device' : 'Edit Device Info'}</Typography>
@@ -451,22 +472,16 @@ const DevicePage = () => {
           </Box>
         )}
 
-
-        {/* =========================================
-            โซนที่ 2: หน้าต่าง DASHBOARD (ระบบลากวาง)
-            ========================================= */}
         {activeTab === 'dashboard' && (
           <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
             
-            {/* พื้นที่ Canvas ลากวางกล่อง */}
             <Box 
               sx={{ flex: 1, position: 'relative', bgcolor: '#f4f6f8', backgroundImage: 'radial-gradient(#ddd 1px, transparent 0)', backgroundSize: '20px 20px' }}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp} // ปล่อยเมาส์เมื่อหลุดกรอบ
+              onMouseLeave={handleMouseUp} 
             >
               {device.tags.map((tag, index) => {
-                // ถ้าสคริปต์ว่าง หรือไม่ได้ใส่ค่า จะไม่โชว์กล่องบนจอ (หรือจะให้โชว์ก็ได้)
                 if(!tag.script || !tag.script.trim()) return null; 
 
                 return (
@@ -500,7 +515,6 @@ const DevicePage = () => {
               })}
             </Box>
 
-            {/* แถบ Tools ฝั่งขวามือ (ทำหน้าตาให้เหมือนในรูปเป๊ะ) */}
             <Box sx={{ width: 250, bgcolor: '#fff', borderLeft: '1px solid #ddd', p: 0, overflowY: 'auto' }}>
                <Box sx={{ p: 2, bgcolor: '#1976d2', color: '#fff', display: 'flex', alignItems: 'center', gap: 1 }}>
                  <Typography variant="subtitle2" fontWeight="bold">Tools</Typography>
