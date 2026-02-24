@@ -3,18 +3,7 @@ import Page from '../../containers/Page/Page'
 import { useIntl } from 'react-intl'
 import { useNavigate } from 'react-router-dom'
 import {
-  Box,
-  Button,
-  Typography,
-  Grid,
-  Card,
-  CardContent,
-  Divider,
-  CircularProgress,
-  Checkbox,
-  IconButton,
-  Tooltip,
-  Paper
+  Box, Button, Typography, Grid, Card, CardContent, Divider, CircularProgress, Checkbox, Paper
 } from '@mui/material'
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline'
 import ComputerIcon from '@mui/icons-material/Computer'
@@ -24,12 +13,10 @@ const Dashboard = () => {
   const intl = useIntl()
   const navigate = useNavigate()
 
-  // State สำหรับเก็บข้อมูล
-  const [devices, setDevices] = useState([]) // เริ่มต้นเป็น array ว่าง (ไม่มี Mock data แล้ว)
+  const [devices, setDevices] = useState([]) 
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState([]) // เก็บ ID ของรายการที่ถูกติ๊กเลือก
+  const [selected, setSelected] = useState([]) 
 
-  // ฟังก์ชันดึง Token
   function getAuth() {
     let auth = null
     const item = localStorage.getItem('base-shell:auth')
@@ -37,7 +24,6 @@ const Dashboard = () => {
     return auth
   }
 
-  // ฟังก์ชันดึงข้อมูลจาก API จริง
   async function fetchDevices() {
     try {
       const auth = getAuth()
@@ -47,7 +33,7 @@ const Dashboard = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'authorization': auth.token },
         body: JSON.stringify({
-          collection: 'Device', // ดึงจาก Collection 'Device'
+          collection: 'Device',
           query: {},
         })
       })
@@ -55,11 +41,10 @@ const Dashboard = () => {
       const json = await resp.json()
       if (Array.isArray(json)) {
         setDevices(json)
-        setSelected([]) // เคลียร์การเลือกทุกครั้งที่โหลดใหม่
+        setSelected([]) 
       } else {
         setDevices([])
       }
-
     } catch (error) {
       console.error('Fetch error:', error)
     } finally {
@@ -67,15 +52,10 @@ const Dashboard = () => {
     }
   }
 
-  // โหลดข้อมูลเมื่อเข้าหน้าเว็บ
   useEffect(() => {
     fetchDevices()
   }, [])
 
-
-  // --- Logic การเลือก (Selection) ---
-
-  // 1. เลือกทั้งหมด / ยกเลิกทั้งหมด
   const handleSelectAll = (event) => {
     if (event.target.checked) {
       const newSelecteds = devices.map((n) => n._id)
@@ -85,10 +65,8 @@ const Dashboard = () => {
     setSelected([])
   }
 
-  // 2. เลือกทีละรายการ
   const handleSelectOne = (event, id) => {
-    event.stopPropagation() // ป้องกันไม่ให้ Event ทะลุไปกดคลิกการ์ด (เพื่อ Edit)
-    
+    event.stopPropagation() 
     const selectedIndex = selected.indexOf(id)
     let newSelected = []
 
@@ -107,27 +85,19 @@ const Dashboard = () => {
     setSelected(newSelected)
   }
 
-  // 3. ลบรายการที่เลือก (Bulk Delete)
   const handleDeleteSelected = async () => {
     if (!window.confirm(`Are you sure you want to delete ${selected.length} devices?`)) return
-
     const auth = getAuth()
     try {
-      // วนลูปส่งคำสั่งลบทีละตัว
       for (let id of selected) {
          await fetch('/api/preferences/deleteDocument', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'authorization': auth.token },
-            body: JSON.stringify({
-              collection: 'Device',
-              query: { _id: id },
-            })
+            body: JSON.stringify({ collection: 'Device', query: { _id: id } })
          })
       }
-      // ลบเสร็จโหลดข้อมูลใหม่
       fetchDevices()
       alert('Deleted successfully')
-
     } catch (error) {
       console.error(error)
       alert('Delete failed')
@@ -138,55 +108,27 @@ const Dashboard = () => {
     <Page pageTitle={intl.formatMessage({ id: 'dashboard', defaultMessage: 'Dashboard' })}>
       <Box sx={{ padding: 3 }}>
 
-        {/* --- Header & Toolbar --- */}
-        <Paper 
-          elevation={1} 
-          sx={{ 
-            mb: 4, 
-            p: 2, 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between',
-            bgcolor: selected.length > 0 ? '#e3f2fd' : '#fff' // เปลี่ยนสีถ้ามีการเลือก
-          }}
-        >
-          {/* ฝั่งซ้าย: Checkbox All และข้อความ */}
+        <Paper elevation={1} sx={{ mb: 4, p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', bgcolor: selected.length > 0 ? '#e3f2fd' : '#fff' }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <Checkbox
               color="primary"
               indeterminate={selected.length > 0 && selected.length < devices.length}
               checked={devices.length > 0 && selected.length === devices.length}
               onChange={handleSelectAll}
-              disabled={devices.length === 0} // ถ้าไม่มีข้อมูล ห้ามกด
+              disabled={devices.length === 0} 
             />
             <Typography variant="h6" fontWeight="bold" sx={{ ml: 1 }}>
-              {selected.length > 0 
-                ? `${selected.length} Selected` 
-                : `Connected Devices (${devices.length})`
-              }
+              {selected.length > 0 ? `${selected.length} Selected` : `Connected Devices (${devices.length})`}
             </Typography>
           </Box>
           
-          {/* ฝั่งขวา: ปุ่ม Action */}
           <Box>
             {selected.length > 0 ? (
-              <Button
-                variant="outlined"
-                color="error"
-                startIcon={<DeleteIcon />}
-                onClick={handleDeleteSelected}
-                sx={{ mr: 2 }}
-              >
+              <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={handleDeleteSelected} sx={{ mr: 2 }}>
                 Delete Selected
               </Button>
             ) : (
-              <Button
-                variant="contained"
-                color="success"
-                size="large"
-                startIcon={<AddCircleOutlineIcon />}
-                onClick={() => navigate('/dashboard/create')} 
-              >
+              <Button variant="contained" color="success" size="large" startIcon={<AddCircleOutlineIcon />} onClick={() => navigate('/dashboard/create')} >
                 Add Device
               </Button>
             )}
@@ -195,11 +137,8 @@ const Dashboard = () => {
 
         <Divider sx={{ mb: 4 }} />
 
-        {/* --- Content: รายการ Device Cards --- */}
         {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 5 }}>
-            <CircularProgress />
-          </Box>
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 5 }}><CircularProgress /></Box>
         ) : (
           <Grid container spacing={3}>
             {devices.map((device) => {
@@ -210,48 +149,33 @@ const Dashboard = () => {
                   <Card
                     elevation={isSelected ? 4 : 2}
                     sx={{
-                      height: '100%',
-                      position: 'relative', // เพื่อวาง checkbox แบบ absolute
-                      transition: '0.3s',
-                      cursor: 'pointer',
+                      height: '100%', position: 'relative', transition: '0.3s', cursor: 'pointer',
                       '&:hover': { transform: 'translateY(-5px)', boxShadow: 6 },
                       border: isSelected ? '2px solid #1976d2' : '1px solid #eee',
                       bgcolor: isSelected ? '#f5f9ff' : '#fff'
                     }}
-                    // กดที่ตัวการ์ด -> ไปหน้า Edit
                     onClick={() => navigate(`/dashboard/${device._id}`)}
                   >
-                    {/* Checkbox มุมขวาบนของการ์ด */}
                     <Box sx={{ position: 'absolute', top: 5, right: 5, zIndex: 10 }}>
-                       <Checkbox 
-                          checked={isSelected}
-                          onClick={(e) => handleSelectOne(e, device._id)} // กด Checkbox -> แค่เลือก
-                       />
+                       <Checkbox checked={isSelected} onClick={(e) => handleSelectOne(e, device._id)} />
                     </Box>
 
                     <CardContent sx={{ textAlign: 'center', p: 3, pt: 4 }}>
-                      <ComputerIcon 
-                        sx={{ 
-                          fontSize: 60, 
-                          color: device.status === 'Active' ? 'primary.main' : 'text.disabled', 
-                          mb: 2 
-                        }} 
-                      />
-                      <Typography variant="h6" gutterBottom noWrap>
-                        {device.name || 'Unnamed Device'}
-                      </Typography>
+                      <ComputerIcon sx={{ fontSize: 60, color: device.status === 'Active' ? 'primary.main' : 'text.disabled', mb: 2 }} />
+                      <Typography variant="h6" gutterBottom noWrap>{device.name || 'Unnamed Device'}</Typography>
+                      
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                         Type: {device.type || '-'}
                       </Typography>
+
+                      {/* --- โชว์ป้าย Tag/Revision ตรงนี้ --- */}
+                      <Typography variant="body2" sx={{ mb: 2, color: '#e65100', fontWeight: 'bold' }}>
+                        Revision: #{device.tag || 1}
+                      </Typography>
+
                       <Typography
                         variant="caption"
-                        sx={{
-                          px: 1.5, py: 0.5,
-                          borderRadius: 10,
-                          fontWeight: 'bold',
-                          bgcolor: device.status === 'Active' ? '#e8f5e9' : '#f5f5f5',
-                          color: device.status === 'Active' ? '#2e7d32' : '#757575'
-                        }}
+                        sx={{ px: 1.5, py: 0.5, borderRadius: 10, fontWeight: 'bold', bgcolor: device.status === 'Active' ? '#e8f5e9' : '#f5f5f5', color: device.status === 'Active' ? '#2e7d32' : '#757575' }}
                       >
                         {device.status || 'Unknown'}
                       </Typography>
@@ -261,20 +185,16 @@ const Dashboard = () => {
               );
             })}
 
-            {/* กรณีไม่มีข้อมูล */}
             {devices.length === 0 && (
               <Grid item xs={12}>
                 <Box sx={{ p: 5, textAlign: 'center', border: '2px dashed #e0e0e0', borderRadius: 2, color: 'text.secondary' }}>
                   <Typography variant="body1" gutterBottom>No devices found.</Typography>
-                  <Button variant="outlined" onClick={() => navigate('/dashboard/create')}>
-                    Create your first device
-                  </Button>
+                  <Button variant="outlined" onClick={() => navigate('/dashboard/create')}>Create your first device</Button>
                 </Box>
               </Grid>
             )}
           </Grid>
         )}
-
       </Box>
     </Page>
   )

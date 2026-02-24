@@ -13,18 +13,50 @@ const userSchema = new Schema({
   dateExpire: Date,
 })
 
-// --- [เพิ่มส่วนนี้] Schema ของ Device ---
+// --- โครงสร้าง Tag แบบเต็มรูป ---
+const tagSchema = new Schema({
+  label: String,
+  script: String,
+  updateInterval: String, 
+  record: Boolean,
+  sync: Boolean,
+  api: Boolean,
+  line: Boolean,
+  email: Boolean,
+  // ส่วนของ Alarm
+  alarm: String,
+  spLow: String,
+  spHigh: String,
+  critical: String,
+  title: String,
+  alert: String,
+  description: String,
+  x: Number, // เก็บตำแหน่งแกน X แนวนอน
+  y: Number  // เก็บตำแหน่งแกน Y แนวตั้ง
+})
+
+// --- โครงสร้าง Device แบบเต็มรูป ---
 const deviceSchema = new Schema({
   _id: String,
+  code: String,
+  connection: String,
+  model: String,
+  ipAddr: String,
   name: String,
-  type: String,
+  remark: String,
+  apiCode: String,
+  lineChannel: String,
+  lineId: String,
+  emailFrom: String,
+  emailPwd: String,
+  emailTo: String,
   status: String,
-  script: String, // เก็บโค้ด JavaScript
+  revision: Number, 
+  tags: [tagSchema], 
 })
-// ------------------------------------
 
 module.exports = {
   mongoose: mongoose,
   userSchema: userSchema,
-  deviceSchema: deviceSchema, // <-- อย่าลืม export ออกไป
+  deviceSchema: deviceSchema,
 }
