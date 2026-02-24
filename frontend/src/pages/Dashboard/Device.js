@@ -32,7 +32,6 @@ const jsexe = async (code) => {
   } catch (error) { throw error }
 }
 
-// ฟังก์ชันแปลงข้อความเวลาให้เป็นมิลลิวินาที (ms)
 const getIntervalMs = (intervalStr) => {
   switch(intervalStr) {
     case '1sec': return 1000;
@@ -43,7 +42,7 @@ const getIntervalMs = (intervalStr) => {
     case 'week': return 604800000;
     case 'month': return 2592000000;
     case 'year': return 31536000000;
-    default: return 1000; // ค่าเริ่มต้นถ้าหาไม่เจอคือ 1 วินาที
+    default: return 1000;
   }
 }
 
@@ -53,6 +52,7 @@ const DevicePage = () => {
   
   const isCreateMode = id === 'create'
   const collectionName = 'Device'
+  const historyCollectionName = 'HistoryData' // ตารางใหม่สำหรับเก็บประวัติ
 
   const [loading, setLoading] = useState(!isCreateMode)
   const [saving, setSaving] = useState(false)
@@ -66,6 +66,11 @@ const DevicePage = () => {
   const [selectedDate, setSelectedDate] = useState(today); 
   const [realtimeChartData, setRealtimeChartData] = useState([]);
 
+  // State สำหรับเก็บข้อมูลอดีตที่ดึงมาจาก Database จริง
+  const [historicalChartData, setHistoricalChartData] = useState([]);
+  const [isHistoricalMode, setIsHistoricalMode] = useState(false);
+  const [isChartLoading, setIsChartLoading] = useState(false);
+
   const [device, setDevice] = useState({
     _id: '', code: '0', connection: 'Virtual', model: 'Virtual', ipAddr: '',
     name: 'Virtual', remark: 'Virtual Device', apiCode: '',
@@ -76,16 +81,14 @@ const DevicePage = () => {
   })
 
   const [originalDevice, setOriginalDevice] = useState(null)
-  
   const [tagResults, setTagResults] = useState({})
   const [tagErrors, setTagErrors] = useState({})
 
   const tagsRef = useRef([])
-  
-  // Ref สำหรับเก็บผลลัพธ์ล่าสุด และเวลาที่รันล่าสุดของแต่ละแท็ก
   const tagResultsRef = useRef({}) 
   const tagErrorsRef = useRef({})
-  const lastRunTimes = useRef({}) // เก็บเวลาที่รันล่าสุด { 0: 1678888888, 1: 1678888890 }
+  const lastRunTimes = useRef({}) 
+  const lastDbSaveTime = useRef(Date.now()) // ตัวนับเวลาสำหรับเซฟลง Database
 
   function getAuth() {
     let auth = null
@@ -96,29 +99,71 @@ const DevicePage = () => {
 
   useEffect(() => { tagsRef.current = device.tags }, [device.tags])
 
-  // --- [อัปเดตระบบ Loop] ควบคุมเวลาตาม Update Interval ---
+  // --- [อัปเดตใหม่!] ดึงข้อมูลประวัติจาก Database ของจริง ---
+  useEffect(() => {
+    if (selectedDate === today) {
+      setIsHistoricalMode(false);
+    } else {
+      setIsHistoricalMode(true);
+      setIsChartLoading(true); 
+
+      async function fetchHistoryFromDB() {
+        try {
+          const auth = getAuth();
+          if (!auth) return;
+          
+          // ยิง API ไปค้นหาข้อมูลของอุปกรณ์ตัวนี้ ในวันที่เลือก
+          const resp = await fetch('/api/preferences/readDocument', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'authorization': auth.token },
+            body: JSON.stringify({ 
+              collection: historyCollectionName, 
+              query: { deviceId: id, date: selectedDate },
+              // ถ้า backend ของคุณรองรับ sort ให้ใส่ไปด้วย หรือเรียงที่ frontend เอา
+            })
+          });
+
+          const json = await resp.json();
+          if (Array.isArray(json) && json.length > 0) {
+            // เรียงลำดับข้อมูลตามเวลา (timestamp) ให้กราฟเส้นวิ่งจากซ้ายไปขวาถูกทิศ
+            json.sort((a, b) => a.timestamp - b.timestamp);
+            setHistoricalChartData(json);
+          } else {
+            // ถ้าค้นไม่เจอเลย
+            setHistoricalChartData([]); 
+          }
+        } catch (error) {
+          console.error("Error fetching history:", error);
+          setHistoricalChartData([]);
+        } finally {
+          setIsChartLoading(false);
+        }
+      }
+
+      fetchHistoryFromDB();
+    }
+  }, [selectedDate, today, id]);
+
+  // --- [อัปเดตใหม่!] ระบบเซฟประวัติลง Database อัตโนมัติ (Data Logger) ---
   useEffect(() => {
     let isMounted = true;
-    
-    // นาฬิกากลางเช็คทุกๆ 1 วินาที
     const intervalId = setInterval(async () => {
       const currentTags = tagsRef.current;
       if (!currentTags || currentTags.length === 0) return;
 
       const now = Date.now();
-      let hasUpdates = false; // ตัวแปรเช็คว่ารอบนี้มีแท็กไหนถึงเวลารันบ้างไหม
+      let hasUpdates = false; 
 
-      // ดึงค่าผลลัพธ์เก่ามาเตรียมรอไว้
       const newResults = { ...tagResultsRef.current };
       const newErrors = { ...tagErrorsRef.current };
 
+      // 1. ประมวลผลสคริปต์
       await Promise.all(currentTags.map(async (tag, index) => {
         if (!tag.script || !tag.script.trim()) return;
 
         const intervalMs = getIntervalMs(tag.updateInterval);
         const lastRun = lastRunTimes.current[index] || 0;
 
-        // เช็คว่าเวลาปัจจุบัน ห่างจากเวลาที่รันล่าสุด มากกว่าหรือเท่ากับ รอบเวลาที่ตั้งไว้หรือยัง?
         if (now - lastRun >= intervalMs) {
           try {
             const output = await jsexe(tag.script);
@@ -127,25 +172,19 @@ const DevicePage = () => {
           } catch (err) {
             newErrors[index] = err.message;
           }
-          // บันทึกเวลาที่รันล่าสุด
           lastRunTimes.current[index] = now;
           hasUpdates = true;
         }
       }));
 
-      // ถ้ามีแท็กไหนอัปเดตค่า ให้ทำการวาดกราฟและอัปเดตหน้าจอ
+      // 2. อัปเดตหน้าจอ
       if (isMounted && hasUpdates) {
-        setTagResults(newResults);
-        tagResultsRef.current = newResults;
-        
-        setTagErrors(newErrors);
-        tagErrorsRef.current = newErrors;
+        setTagResults(newResults); tagResultsRef.current = newResults;
+        setTagErrors(newErrors); tagErrorsRef.current = newErrors;
 
-        // --- เตรียมข้อมูลสำหรับวาดกราฟ ---
         const timeStr = new Date().toLocaleTimeString('th-TH', { hour12: false });
         const newChartPoint = { time: timeStr };
 
-        // ดึงตัวเลขจากผลลัพธ์ล่าสุดของทุกแท็กไปใส่กราฟ
         currentTags.forEach((tag, index) => {
            const numValue = parseFloat(newResults[index]);
            if (!isNaN(numValue)) {
@@ -153,16 +192,58 @@ const DevicePage = () => {
            }
         });
 
+        // โชว์กราฟ Live Data
         setRealtimeChartData(prev => {
            const newData = [...prev, newChartPoint];
            if (newData.length > 30) newData.shift(); 
            return newData;
         });
       }
-    }, 1000); // Loop กลางเดินทุก 1 วิ แต่จะรันสคริปต์ไหมขึ้นอยู่กับ if ข้างใน
+
+      // 3. [สำคัญ!] ส่งข้อมูลไปเซฟลง Database ประวัติ ทุกๆ 1 นาที (60000 ms)
+      if (now - lastDbSaveTime.current >= 60000) {
+        const currentDateStr = new Date().toISOString().split('T')[0]; // เช่น "2026-02-24"
+        const currentTimeStr = new Date().toLocaleTimeString('th-TH', { hour12: false, hour: '2-digit', minute:'2-digit' }); // เช่น "14:30"
+        
+        let dataToSave = {
+          deviceId: id,
+          date: currentDateStr,
+          time: currentTimeStr,
+          timestamp: now
+        };
+
+        let hasRecordableData = false;
+        
+        // รวบรวมเฉพาะ Tag ที่ติ๊ก Record: True
+        currentTags.forEach((tag, idx) => {
+           if (tag.record && tag.script && newResults[idx] !== undefined) {
+               const numValue = parseFloat(newResults[idx]);
+               if(!isNaN(numValue)) {
+                   dataToSave[tag.label || `Tag ${idx+1}`] = numValue;
+                   hasRecordableData = true;
+               }
+           }
+        });
+
+        // ถ้ายิง API ไปเซฟเฉพาะตอนที่มีข้อมูลตัวเลขอยู่จริงๆ
+        if (hasRecordableData && id !== 'create') {
+            const auth = getAuth();
+            if(auth) {
+               fetch('/api/preferences/createDocument', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json', 'authorization': auth.token },
+                 body: JSON.stringify({ collection: historyCollectionName, data: dataToSave })
+               }).catch(e => console.error("History Save Error:", e));
+            }
+        }
+        // รีเซ็ตเวลานับถอยหลังใหม่
+        lastDbSaveTime.current = now;
+      }
+
+    }, 1000); 
 
     return () => { isMounted = false; clearInterval(intervalId); };
-  }, []);
+  }, [id]); // เอา id มาเผื่อการสลับอุปกรณ์
 
   useEffect(() => {
     if (isCreateMode) { setDevice(prev => ({ ...prev, tags: [] })); return; }
@@ -197,30 +278,22 @@ const DevicePage = () => {
   const handleTagChange = (index, field, value) => {
     const newTags = [...device.tags]; newTags[index][field] = value;
     setDevice(prev => ({ ...prev, tags: newTags }))
-    
-    // ถ้ามีการเปลี่ยนเวลาอัปเดต ให้รีเซ็ต lastRunTime ให้มันเริ่มรันรอบใหม่ทันที
-    if (field === 'updateInterval') {
-       lastRunTimes.current[index] = 0; 
-    }
+    if (field === 'updateInterval') lastRunTimes.current[index] = 0; 
   }
 
-  // ฟังก์ชัน Test Script (กดเอง) ยังทำงานได้ปกติเหมือนเดิม
   const runTagScript = async (index, e) => {
     if (e) e.stopPropagation()
     const newErrors = { ...tagErrorsRef.current, [index]: null };
     const newResults = { ...tagResultsRef.current, [index]: null };
-    
     setTagErrors(newErrors); tagErrorsRef.current = newErrors;
     setTagResults(newResults); tagResultsRef.current = newResults;
     try {
       const code = device.tags[index].script
       if (!code || !code.trim()) return
       const output = await jsexe(code)
-      
       const successResults = { ...tagResultsRef.current, [index]: output };
       setTagResults(successResults); tagResultsRef.current = successResults;
-      lastRunTimes.current[index] = Date.now(); // รีเซ็ตเวลาหลังจากกดเทสด้วย
-
+      lastRunTimes.current[index] = Date.now(); 
     } catch (err) { 
       const failedErrors = { ...tagErrorsRef.current, [index]: err.message };
       setTagErrors(failedErrors); tagErrorsRef.current = failedErrors;
@@ -315,12 +388,9 @@ const DevicePage = () => {
       if (json.error) throw new Error(json.error);
 
       setDevice(dataToSave); setOriginalDevice(JSON.parse(JSON.stringify(dataToSave))); 
-      
-      // อัปเดต Refs และ State ทิ้งค่าแท็กที่โดนลบ
       const newResults = { ...tagResults }; delete newResults[indexToRemove];
       setTagResults(newResults); tagResultsRef.current = newResults;
-      lastRunTimes.current = {}; // เคลียร์เวลาเพื่อป้องกันบักตอนเรียงเลขใหม่
-
+      lastRunTimes.current = {}; 
       alert('Tag deleted and reordered successfully!');
     } catch (error) { alert('Error deleting tag: ' + error.message); } 
     finally { setSaving(false); }
@@ -444,16 +514,8 @@ const DevicePage = () => {
                   <Grid container spacing={3} alignItems="flex-start" sx={{ mb: 2 }}>
                     <Grid item xs={3}><TextField {...inputProps} label="Label" value={tag.label} onChange={(e) => handleTagChange(index, 'label', e.target.value)} /></Grid>
                     <Grid item xs={3}>
-                      {/* --- เพิ่มตัวเลือก 15sec, 30sec ตรงนี้ --- */}
                       <TextField select {...inputProps} label="Update Interval" value={tag.updateInterval || '1sec'} onChange={(e) => handleTagChange(index, 'updateInterval', e.target.value)}>
-                        <MenuItem value="1sec">1 sec</MenuItem>
-                        <MenuItem value="15sec">15 sec</MenuItem>
-                        <MenuItem value="30sec">30 sec</MenuItem>
-                        <MenuItem value="1min">1 min</MenuItem>
-                        <MenuItem value="daily">Daily</MenuItem>
-                        <MenuItem value="week">Weekly</MenuItem>
-                        <MenuItem value="month">Monthly</MenuItem>
-                        <MenuItem value="year">Yearly</MenuItem>
+                        <MenuItem value="1sec">1 sec</MenuItem><MenuItem value="15sec">15 sec</MenuItem><MenuItem value="30sec">30 sec</MenuItem><MenuItem value="1min">1 min</MenuItem><MenuItem value="daily">Daily</MenuItem><MenuItem value="week">Weekly</MenuItem><MenuItem value="month">Monthly</MenuItem><MenuItem value="year">Yearly</MenuItem>
                       </TextField>
                     </Grid>
                     <Grid item xs={6} sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -517,7 +579,7 @@ const DevicePage = () => {
                   sx={{
                     position: 'absolute',
                     left: device.chartX || 200, top: device.chartY || 200,
-                    width: 600, height: 350, 
+                    width: 650, height: 400, 
                     bgcolor: '#fff',
                     border: draggingIdx === 'chart' ? '2px solid #ff9800' : '1px solid #ccc',
                     boxShadow: draggingIdx === 'chart' ? 6 : 2,
@@ -529,28 +591,43 @@ const DevicePage = () => {
                 >
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }} onMouseDown={e => e.stopPropagation() }>
                     <Typography variant="subtitle1" fontWeight="bold" sx={{ color: '#555' }}>
-                      Mixed Chart (Live Data)
+                      {isHistoricalMode ? `Mixed Chart (History: ${selectedDate})` : 'Mixed Chart (Live Data)'}
                     </Typography>
                     <IconButton size="small" onClick={() => setDevice(prev => ({ ...prev, showChart: false }))}>
                       <CloseIcon />
                     </IconButton>
                   </Box>
 
-                  <Box sx={{ flex: 1, width: '100%' }} onMouseDown={e => e.stopPropagation()}>
+                  <Box sx={{ flex: 1, width: '100%', position: 'relative' }} onMouseDown={e => e.stopPropagation()}>
+                    
+                    {isChartLoading && (
+                      <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', bgcolor: 'rgba(255,255,255,0.7)', zIndex: 5 }}>
+                        <CircularProgress size={30} />
+                        <Typography sx={{ ml: 2, color: '#888', fontWeight: 'bold' }}>Loading History...</Typography>
+                      </Box>
+                    )}
+
+                    {!isChartLoading && isHistoricalMode && historicalChartData.length === 0 && (
+                      <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 4 }}>
+                        <Typography sx={{ color: '#aaa', fontStyle: 'italic' }}>ไม่มีการเก็บบันทึกข้อมูลในวันที่เลือก (No data recorded)</Typography>
+                      </Box>
+                    )}
+
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={realtimeChartData}>
+                      <LineChart data={isHistoricalMode ? historicalChartData : realtimeChartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                         <XAxis dataKey="time" tick={{fontSize: 12}} tickLine={false} />
                         <YAxis tick={{fontSize: 12}} tickLine={false} axisLine={false} />
                         <Tooltip />
                         {device.tags.map((tag, index) => {
-                           if (!tag.script || !tag.script.trim()) return null; 
+                           if (!tag.script || !tag.script.trim() || !tag.record) return null; 
                            return (
                              <Line 
                                key={index} type="monotone" 
                                dataKey={tag.label || `Tag ${index + 1}`} 
                                stroke={CHART_COLORS[index % CHART_COLORS.length]} 
-                               strokeWidth={2} dot={false} isAnimationActive={false} 
+                               strokeWidth={2} dot={isHistoricalMode} 
+                               isAnimationActive={isHistoricalMode}  
                              />
                            )
                         })}
@@ -594,7 +671,7 @@ const DevicePage = () => {
                        sx={{ bgcolor: '#f9f9f9', '& .MuiOutlinedInput-root': { borderRadius: '6px' } }}
                      />
                      <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: '#888', textAlign: 'center' }}>
-                       Select a date to fetch historical records.
+                       Select a past date to view history.
                      </Typography>
                   </Box>
                 </Box>

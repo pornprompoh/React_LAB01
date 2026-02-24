@@ -61,8 +61,17 @@ const deviceSchema = new Schema({
   datetimeY: Number
 })
 
+// --- [เพิ่มใหม่] โครงสร้างตารางสำหรับเก็บประวัติย้อนหลัง (History Data) ---
+const historySchema = new Schema({
+  deviceId: String,   // รหัสอุปกรณ์
+  date: String,       // วันที่บันทึก (เช่น "2026-02-23")
+  time: String,       // เวลาที่บันทึก (เช่น "14:30:00")
+  tagsData: Object    // เก็บค่าเซนเซอร์ทั้งหมดในเวลานั้น (เช่น { "Tag1": 25.4, "Tag2": 50 })
+})
+
 module.exports = {
   mongoose: mongoose,
   userSchema: userSchema,
   deviceSchema: deviceSchema,
+  historySchema: historySchema
 }
