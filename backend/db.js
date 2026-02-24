@@ -4,7 +4,7 @@ const {
 } = require('./common')
 const cfg = readcfg();
 
-const mongoose = require('mongoose'); //
+const mongoose = require('mongoose'); 
 const os = require('os');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
@@ -20,10 +20,11 @@ const packageDefinition = protoLoader.loadSync(
 );
 const dbaseproject = grpc.loadPackageDefinition(packageDefinition).dbaseproject;
 
-// --- [1. แก้ไขการ Import ตรงนี้] ---
+// --- [1. แก้ไขการ Import เพิ่ม historySchema ตรงนี้] ---
 const {
   userSchema,
-  deviceSchema, // <-- เพิ่มตัวนี้
+  deviceSchema, 
+  historySchema // <-- เพิ่มตัวนี้
 } = require('./libs/schema');
 // -------------------------------
 
@@ -71,12 +72,19 @@ async function createDocument (call, cb) {
   const base = db.MainBase
   if (base)  {    
     const Model = base.models[call.request.collection]
+    
+    // --- [เพิ่มระบบป้องกัน (Safeguard) ป้องกันระบบเด้งหลุด] ---
+    if (!Model) {
+      console.error(`Create Error: Model '${call.request.collection}' not found. Please register it.`);
+      return cb(null, obj);
+    }
+
     const data = JSON.parse(call.request.data)
     
     if (!data._id)   data._id = new mongoose.Types.ObjectId()+''
     
-    // ใช้ insertOne และเพิ่ม catch error
-    Model.insertOne(data).then(function (resp) { 
+    // --- [แก้ไขจาก insertOne เป็น create ซึ่งเป็นมาตรฐานของ Mongoose] ---
+    Model.create(data).then(function (resp) { 
       if (resp)  obj.data = JSON.stringify([resp])
       cb(null, obj)
     }).catch(err => {
@@ -99,11 +107,10 @@ async function readDocument (call, cb) {
  
   const base = db.MainBase
   if (base)  {    
-    // --- จุดที่สำคัญ: ต้องมี Model ก่อนถึงจะเรียกใช้ได้ ---
     const Model = base.models[call.request.collection]
     
     if (!Model) {
-      console.error(`Error: Model '${call.request.collection}' not found. Did you register it?`);
+      console.error(`Read Error: Model '${call.request.collection}' not found.`);
       return cb(null, obj);
     }
 
@@ -148,6 +155,12 @@ async function updateDocument (call, cb) {
   const base = db.MainBase
   if (base)  {    
     const Model = base.models[call.request.collection]
+
+    if (!Model) {
+      console.error(`Update Error: Model '${call.request.collection}' not found.`);
+      return cb(null, obj);
+    }
+
     const query = JSON.parse(call.request.query)
     let data = JSON.parse(call.request.data)
 
@@ -183,6 +196,12 @@ async function deleteDocument (call, cb) {
   const base = db.MainBase
   if (base)  {    
     const Model = base.models[call.request.collection]
+
+    if (!Model) {
+      console.error(`Delete Error: Model '${call.request.collection}' not found.`);
+      return cb(null, obj);
+    }
+
     const query = JSON.parse(call.request.query)
 
     Model.deleteOne(query).then(function (resp) { 
@@ -243,9 +262,10 @@ async function main ()  {
   }
   
   if (db.MainBase)  {
-    // --- [2. ลงทะเบียน Model ให้ครบตรงนี้] ---
+    // --- [2. ลงทะเบียน Model ให้ครบตรงนี้ครับ] ---
     db.MainBase.model('User', userSchema);
-    db.MainBase.model('Device', deviceSchema); // <-- เพิ่มบรรทัดนี้!
+    db.MainBase.model('Device', deviceSchema); 
+    db.MainBase.model('HistoryData', historySchema); // <-- เพิ่มบรรทัดนี้แล้ว!
     // ------------------------------------
   }
   else  {

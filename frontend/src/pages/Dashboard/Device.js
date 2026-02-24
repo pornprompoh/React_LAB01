@@ -686,9 +686,11 @@ const DevicePage = () => {
                </Box>
                <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                   
+                  {/*
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, p: 0.5 }}>
                     <TextFieldsIcon sx={{ color: '#f44336' }} /> <Typography variant="body2">Textbox</Typography>
                   </Box>
+                  */}
 
                   <Box onClick={() => setDevice(prev => ({ ...prev, showChart: true }))} sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, bgcolor: device.showChart ? '#fff3e0' : 'transparent', p: 0.5, borderRadius: 1 }}>
                     <InsertChartIcon sx={{ color: '#ff9800' }} /> <Typography variant="body2" fontWeight={device.showChart ? 'bold' : 'normal'}>Chart</Typography>
@@ -698,6 +700,7 @@ const DevicePage = () => {
                     <DateRangeIcon sx={{ color: '#e91e63' }} /> <Typography variant="body2" fontWeight={device.showDatetime ? 'bold' : 'normal'}>Datetime</Typography>
                   </Box>
 
+                  {/* ซ่อน Gauge และ Map ไว้ก่อนชั่วคราว
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, p: 0.5 }}>
                     <SpeedIcon sx={{ color: '#9c27b0' }} /> <Typography variant="body2">Gauge</Typography>
                   </Box>
@@ -705,6 +708,7 @@ const DevicePage = () => {
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, p: 0.5 }}>
                     <MapIcon sx={{ color: '#4caf50' }} /> <Typography variant="body2">Map</Typography>
                   </Box>
+                  */}
 
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 0.5 }}>
