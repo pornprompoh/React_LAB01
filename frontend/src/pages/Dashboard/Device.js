@@ -17,10 +17,10 @@ import TextFieldsIcon from '@mui/icons-material/TextFields'
 import InsertChartIcon from '@mui/icons-material/InsertChart'
 import SpeedIcon from '@mui/icons-material/Speed'
 import MapIcon from '@mui/icons-material/Map'
+import DateRangeIcon from '@mui/icons-material/DateRange' 
 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-// ชุดสีสำหรับกราฟ (ให้แต่ละแท็กมีสีไม่ซ้ำกัน)
 const CHART_COLORS = ['#1976d2', '#4caf50', '#ff9800', '#9c27b0', '#f44336', '#00bcd4', '#795548', '#607d8b'];
 
 const jsexe = async (code) => {
@@ -30,6 +30,21 @@ const jsexe = async (code) => {
     if (result instanceof Promise) return await result
     return result
   } catch (error) { throw error }
+}
+
+// ฟังก์ชันแปลงข้อความเวลาให้เป็นมิลลิวินาที (ms)
+const getIntervalMs = (intervalStr) => {
+  switch(intervalStr) {
+    case '1sec': return 1000;
+    case '15sec': return 15000;
+    case '30sec': return 30000;
+    case '1min': return 60000;
+    case 'daily': return 86400000;
+    case 'week': return 604800000;
+    case 'month': return 2592000000;
+    case 'year': return 31536000000;
+    default: return 1000; // ค่าเริ่มต้นถ้าหาไม่เจอคือ 1 วินาที
+  }
 }
 
 const DevicePage = () => {
@@ -49,8 +64,6 @@ const DevicePage = () => {
   
   const today = new Date().toISOString().split('T')[0]; 
   const [selectedDate, setSelectedDate] = useState(today); 
-
-  // --- [อัปเดต] State สำหรับเก็บข้อมูลกราฟเรียลไทม์ ---
   const [realtimeChartData, setRealtimeChartData] = useState([]);
 
   const [device, setDevice] = useState({
@@ -58,14 +71,21 @@ const DevicePage = () => {
     name: 'Virtual', remark: 'Virtual Device', apiCode: '',
     lineChannel: '', lineId: '', emailFrom: '', emailPwd: '', emailTo: '',
     status: 'Active', revision: 1, tags: [],
-    showChart: false, chartX: 200, chartY: 100 
+    showChart: false, chartX: 200, chartY: 200,
+    showDatetime: false, datetimeX: 500, datetimeY: 50 
   })
 
   const [originalDevice, setOriginalDevice] = useState(null)
+  
   const [tagResults, setTagResults] = useState({})
   const [tagErrors, setTagErrors] = useState({})
 
   const tagsRef = useRef([])
+  
+  // Ref สำหรับเก็บผลลัพธ์ล่าสุด และเวลาที่รันล่าสุดของแต่ละแท็ก
+  const tagResultsRef = useRef({}) 
+  const tagErrorsRef = useRef({})
+  const lastRunTimes = useRef({}) // เก็บเวลาที่รันล่าสุด { 0: 1678888888, 1: 1678888890 }
 
   function getAuth() {
     let auth = null
@@ -76,52 +96,71 @@ const DevicePage = () => {
 
   useEffect(() => { tagsRef.current = device.tags }, [device.tags])
 
-  // --- [อัปเดต] Loop 1 วินาที ให้วาดกราฟด้วย ---
+  // --- [อัปเดตระบบ Loop] ควบคุมเวลาตาม Update Interval ---
   useEffect(() => {
     let isMounted = true;
+    
+    // นาฬิกากลางเช็คทุกๆ 1 วินาที
     const intervalId = setInterval(async () => {
       const currentTags = tagsRef.current;
       if (!currentTags || currentTags.length === 0) return;
 
-      const resultsBatch = {}; 
-      const errorsBatch = {};
-      
-      // สร้าง Data Point 1 จุดสำหรับกราฟ ณ เวลานี้
-      const now = new Date();
-      const newChartPoint = { time: now.toLocaleTimeString('th-TH', { hour12: false }) };
+      const now = Date.now();
+      let hasUpdates = false; // ตัวแปรเช็คว่ารอบนี้มีแท็กไหนถึงเวลารันบ้างไหม
+
+      // ดึงค่าผลลัพธ์เก่ามาเตรียมรอไว้
+      const newResults = { ...tagResultsRef.current };
+      const newErrors = { ...tagErrorsRef.current };
 
       await Promise.all(currentTags.map(async (tag, index) => {
-        if (tag.script && tag.script.trim()) {
+        if (!tag.script || !tag.script.trim()) return;
+
+        const intervalMs = getIntervalMs(tag.updateInterval);
+        const lastRun = lastRunTimes.current[index] || 0;
+
+        // เช็คว่าเวลาปัจจุบัน ห่างจากเวลาที่รันล่าสุด มากกว่าหรือเท่ากับ รอบเวลาที่ตั้งไว้หรือยัง?
+        if (now - lastRun >= intervalMs) {
           try {
             const output = await jsexe(tag.script);
-            resultsBatch[index] = output;
-            errorsBatch[index] = null;
-
-            // --- สกัดเอาเฉพาะ "ตัวเลข" ไปใส่ในกราฟ ---
-            // ถ้าเป็น "26.0 °C" parseFloat จะได้ 26.0
-            // ถ้าเป็น "✅ NORMAL" parseFloat จะได้ NaN (Not a Number)
-            const numValue = parseFloat(output);
-            if (!isNaN(numValue)) {
-               const tagLabel = tag.label || `Tag ${index + 1}`;
-               newChartPoint[tagLabel] = numValue; // นำไปใส่กราฟ
-            }
-
-          } catch (err) { errorsBatch[index] = err.message; }
+            newResults[index] = output;
+            newErrors[index] = null;
+          } catch (err) {
+            newErrors[index] = err.message;
+          }
+          // บันทึกเวลาที่รันล่าสุด
+          lastRunTimes.current[index] = now;
+          hasUpdates = true;
         }
       }));
 
-      if (isMounted) {
-        setTagResults(prev => ({ ...prev, ...resultsBatch }));
-        setTagErrors(prev => ({ ...prev, ...errorsBatch }));
+      // ถ้ามีแท็กไหนอัปเดตค่า ให้ทำการวาดกราฟและอัปเดตหน้าจอ
+      if (isMounted && hasUpdates) {
+        setTagResults(newResults);
+        tagResultsRef.current = newResults;
+        
+        setTagErrors(newErrors);
+        tagErrorsRef.current = newErrors;
 
-        // อัปเดตกราฟ (เก็บประวัติโชว์บนจอแค่ 30 วินาทีล่าสุด กราฟจะได้ไม่เลอะ)
+        // --- เตรียมข้อมูลสำหรับวาดกราฟ ---
+        const timeStr = new Date().toLocaleTimeString('th-TH', { hour12: false });
+        const newChartPoint = { time: timeStr };
+
+        // ดึงตัวเลขจากผลลัพธ์ล่าสุดของทุกแท็กไปใส่กราฟ
+        currentTags.forEach((tag, index) => {
+           const numValue = parseFloat(newResults[index]);
+           if (!isNaN(numValue)) {
+              newChartPoint[tag.label || `Tag ${index + 1}`] = numValue; 
+           }
+        });
+
         setRealtimeChartData(prev => {
            const newData = [...prev, newChartPoint];
-           if (newData.length > 30) newData.shift(); // ตัดอันเก่าสุดทิ้ง
+           if (newData.length > 30) newData.shift(); 
            return newData;
         });
       }
-    }, 1000);
+    }, 1000); // Loop กลางเดินทุก 1 วิ แต่จะรันสคริปต์ไหมขึ้นอยู่กับ if ข้างใน
+
     return () => { isMounted = false; clearInterval(intervalId); };
   }, []);
 
@@ -158,18 +197,34 @@ const DevicePage = () => {
   const handleTagChange = (index, field, value) => {
     const newTags = [...device.tags]; newTags[index][field] = value;
     setDevice(prev => ({ ...prev, tags: newTags }))
+    
+    // ถ้ามีการเปลี่ยนเวลาอัปเดต ให้รีเซ็ต lastRunTime ให้มันเริ่มรันรอบใหม่ทันที
+    if (field === 'updateInterval') {
+       lastRunTimes.current[index] = 0; 
+    }
   }
 
+  // ฟังก์ชัน Test Script (กดเอง) ยังทำงานได้ปกติเหมือนเดิม
   const runTagScript = async (index, e) => {
     if (e) e.stopPropagation()
-    setTagErrors(prev => ({ ...prev, [index]: null }))
-    setTagResults(prev => ({ ...prev, [index]: null }))
+    const newErrors = { ...tagErrorsRef.current, [index]: null };
+    const newResults = { ...tagResultsRef.current, [index]: null };
+    
+    setTagErrors(newErrors); tagErrorsRef.current = newErrors;
+    setTagResults(newResults); tagResultsRef.current = newResults;
     try {
       const code = device.tags[index].script
       if (!code || !code.trim()) return
       const output = await jsexe(code)
-      setTagResults(prev => ({ ...prev, [index]: output }))
-    } catch (err) { setTagErrors(prev => ({ ...prev, [index]: err.message })) }
+      
+      const successResults = { ...tagResultsRef.current, [index]: output };
+      setTagResults(successResults); tagResultsRef.current = successResults;
+      lastRunTimes.current[index] = Date.now(); // รีเซ็ตเวลาหลังจากกดเทสด้วย
+
+    } catch (err) { 
+      const failedErrors = { ...tagErrorsRef.current, [index]: err.message };
+      setTagErrors(failedErrors); tagErrorsRef.current = failedErrors;
+    }
   }
 
   const handleSave = async () => {
@@ -260,7 +315,13 @@ const DevicePage = () => {
       if (json.error) throw new Error(json.error);
 
       setDevice(dataToSave); setOriginalDevice(JSON.parse(JSON.stringify(dataToSave))); 
-      setTagResults({}); setTagErrors({}); alert('Tag deleted and reordered successfully!');
+      
+      // อัปเดต Refs และ State ทิ้งค่าแท็กที่โดนลบ
+      const newResults = { ...tagResults }; delete newResults[indexToRemove];
+      setTagResults(newResults); tagResultsRef.current = newResults;
+      lastRunTimes.current = {}; // เคลียร์เวลาเพื่อป้องกันบักตอนเรียงเลขใหม่
+
+      alert('Tag deleted and reordered successfully!');
     } catch (error) { alert('Error deleting tag: ' + error.message); } 
     finally { setSaving(false); }
   }
@@ -278,8 +339,12 @@ const DevicePage = () => {
     setDragStartPos({ x: e.clientX, y: e.clientY });
 
     if (draggingIdx === 'chart') {
-      setDevice(prev => ({ ...prev, chartX: (prev.chartX || 100) + dx, chartY: (prev.chartY || 100) + dy }));
-    } else {
+      setDevice(prev => ({ ...prev, chartX: (prev.chartX || 200) + dx, chartY: (prev.chartY || 200) + dy }));
+    } 
+    else if (draggingIdx === 'datetime') {
+      setDevice(prev => ({ ...prev, datetimeX: (prev.datetimeX || 500) + dx, datetimeY: (prev.datetimeY || 50) + dy }));
+    } 
+    else {
       const newTags = [...device.tags];
       newTags[draggingIdx].x = (newTags[draggingIdx].x || 50) + dx;
       newTags[draggingIdx].y = (newTags[draggingIdx].y || 50) + dy;
@@ -379,8 +444,16 @@ const DevicePage = () => {
                   <Grid container spacing={3} alignItems="flex-start" sx={{ mb: 2 }}>
                     <Grid item xs={3}><TextField {...inputProps} label="Label" value={tag.label} onChange={(e) => handleTagChange(index, 'label', e.target.value)} /></Grid>
                     <Grid item xs={3}>
+                      {/* --- เพิ่มตัวเลือก 15sec, 30sec ตรงนี้ --- */}
                       <TextField select {...inputProps} label="Update Interval" value={tag.updateInterval || '1sec'} onChange={(e) => handleTagChange(index, 'updateInterval', e.target.value)}>
-                        <MenuItem value="1sec">1 sec</MenuItem><MenuItem value="1min">1 min</MenuItem><MenuItem value="daily">Daily</MenuItem><MenuItem value="week">Weekly</MenuItem><MenuItem value="month">Monthly</MenuItem><MenuItem value="year">Yearly</MenuItem>
+                        <MenuItem value="1sec">1 sec</MenuItem>
+                        <MenuItem value="15sec">15 sec</MenuItem>
+                        <MenuItem value="30sec">30 sec</MenuItem>
+                        <MenuItem value="1min">1 min</MenuItem>
+                        <MenuItem value="daily">Daily</MenuItem>
+                        <MenuItem value="week">Weekly</MenuItem>
+                        <MenuItem value="month">Monthly</MenuItem>
+                        <MenuItem value="year">Yearly</MenuItem>
                       </TextField>
                     </Grid>
                     <Grid item xs={6} sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -423,7 +496,7 @@ const DevicePage = () => {
               sx={{ flex: 1, position: 'relative', bgcolor: '#f4f6f8', backgroundImage: 'radial-gradient(#ddd 1px, transparent 0)', backgroundSize: '20px 20px' }}
               onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} 
             >
-              {/* เรนเดอร์กล่อง Tag ปกติ */}
+              {/* --- 1. กล่อง Tag ปกติ --- */}
               {device.tags.map((tag, index) => {
                 if(!tag.script || !tag.script.trim()) return null; 
                 return (
@@ -437,14 +510,14 @@ const DevicePage = () => {
                 )
               })}
 
-              {/* --- [กล่องกราฟ (Line Chart)] --- */}
+              {/* --- 2. กล่องกราฟ (Line Chart) --- */}
               {device.showChart && (
                 <Box
                   onMouseDown={(e) => handleMouseDown(e, 'chart')}
                   sx={{
                     position: 'absolute',
-                    left: device.chartX || 200, top: device.chartY || 150,
-                    width: 600, height: 400, 
+                    left: device.chartX || 200, top: device.chartY || 200,
+                    width: 600, height: 350, 
                     bgcolor: '#fff',
                     border: draggingIdx === 'chart' ? '2px solid #ff9800' : '1px solid #ccc',
                     boxShadow: draggingIdx === 'chart' ? 6 : 2,
@@ -458,23 +531,11 @@ const DevicePage = () => {
                     <Typography variant="subtitle1" fontWeight="bold" sx={{ color: '#555' }}>
                       Mixed Chart (Live Data)
                     </Typography>
-                    
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      {/* ปฏิทิน */}
-                      <TextField
-                        type="date" size="small" value={selectedDate}
-                        onChange={(e) => setSelectedDate(e.target.value)}
-                        inputProps={{ max: today }}
-                        sx={{ bgcolor: '#f9f9f9', borderRadius: 1 }}
-                      />
-                      
-                      <IconButton size="small" onClick={() => setDevice(prev => ({ ...prev, showChart: false }))}>
-                        <CloseIcon />
-                      </IconButton>
-                    </Box>
+                    <IconButton size="small" onClick={() => setDevice(prev => ({ ...prev, showChart: false }))}>
+                      <CloseIcon />
+                    </IconButton>
                   </Box>
 
-                  {/* ตัวกราฟจาก Recharts (ใช้ข้อมูล Realtime) */}
                   <Box sx={{ flex: 1, width: '100%' }} onMouseDown={e => e.stopPropagation()}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={realtimeChartData}>
@@ -482,58 +543,95 @@ const DevicePage = () => {
                         <XAxis dataKey="time" tick={{fontSize: 12}} tickLine={false} />
                         <YAxis tick={{fontSize: 12}} tickLine={false} axisLine={false} />
                         <Tooltip />
-                        
-                        {/* --- วนลูปสร้างเส้นกราฟตามจำนวน Tag ที่มีอยู่จริง --- */}
                         {device.tags.map((tag, index) => {
-                           if (!tag.script || !tag.script.trim()) return null; // ไม่เอา tag ว่างมาวาด
+                           if (!tag.script || !tag.script.trim()) return null; 
                            return (
                              <Line 
-                               key={index} 
-                               type="monotone" 
+                               key={index} type="monotone" 
                                dataKey={tag.label || `Tag ${index + 1}`} 
-                               stroke={CHART_COLORS[index % CHART_COLORS.length]} // สลับสีไปเรื่อยๆ
-                               strokeWidth={2} 
-                               dot={false} 
-                               isAnimationActive={false} // ปิดอนิเมชันให้กราฟไม่กระตุกตอนเรียลไทม์
+                               stroke={CHART_COLORS[index % CHART_COLORS.length]} 
+                               strokeWidth={2} dot={false} isAnimationActive={false} 
                              />
                            )
                         })}
-
                       </LineChart>
                     </ResponsiveContainer>
                   </Box>
                 </Box>
               )}
 
+              {/* --- 3. กล่อง Datetime (Date Selection) --- */}
+              {device.showDatetime && (
+                <Box
+                  onMouseDown={(e) => handleMouseDown(e, 'datetime')}
+                  sx={{
+                    position: 'absolute',
+                    left: device.datetimeX || 500, top: device.datetimeY || 50,
+                    width: 280, bgcolor: '#fff',
+                    border: draggingIdx === 'datetime' ? '2px solid #e91e63' : '1px solid #ccc',
+                    boxShadow: draggingIdx === 'datetime' ? 6 : 2,
+                    borderRadius: 2, p: 2,
+                    display: 'flex', flexDirection: 'column',
+                    cursor: draggingIdx === 'datetime' ? 'grabbing' : 'grab',
+                    zIndex: draggingIdx === 'datetime' ? 10 : 3
+                  }}
+                >
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }} onMouseDown={e => e.stopPropagation()}>
+                     <Typography variant="subtitle2" fontWeight="bold" sx={{ color: '#555', display: 'flex', alignItems: 'center', gap: 1 }}>
+                       <DateRangeIcon fontSize="small" sx={{ color: '#e91e63' }} /> 
+                       Date Selection
+                     </Typography>
+                     <IconButton size="small" onClick={() => setDevice(prev => ({ ...prev, showDatetime: false }))}>
+                       <CloseIcon fontSize="small" />
+                     </IconButton>
+                  </Box>
+                  
+                  <Box onMouseDown={e => e.stopPropagation()}>
+                     <TextField
+                       type="date" size="small" fullWidth value={selectedDate}
+                       onChange={(e) => setSelectedDate(e.target.value)}
+                       inputProps={{ max: today }} 
+                       sx={{ bgcolor: '#f9f9f9', '& .MuiOutlinedInput-root': { borderRadius: '6px' } }}
+                     />
+                     <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: '#888', textAlign: 'center' }}>
+                       Select a date to fetch historical records.
+                     </Typography>
+                  </Box>
+                </Box>
+              )}
+
             </Box>
 
-            {/* แถบเครื่องมือขวามือ */}
+            {/* --- แถบเครื่องมือขวามือ (Tools) --- */}
             <Box sx={{ width: 250, bgcolor: '#fff', borderLeft: '1px solid #ddd', p: 0, overflowY: 'auto' }}>
                <Box sx={{ p: 2, bgcolor: '#1976d2', color: '#fff', display: 'flex', alignItems: 'center', gap: 1 }}>
                  <Typography variant="subtitle2" fontWeight="bold">Tools</Typography>
                </Box>
-               <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' } }}>
+               <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                  
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, p: 0.5 }}>
                     <TextFieldsIcon sx={{ color: '#f44336' }} /> <Typography variant="body2">Textbox</Typography>
                   </Box>
 
-                  <Box 
-                    onClick={() => setDevice(prev => ({ ...prev, showChart: true }))}
-                    sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, bgcolor: device.showChart ? '#fff3e0' : 'transparent', p: 0.5, borderRadius: 1 }}
-                  >
-                    <InsertChartIcon sx={{ color: '#ff9800' }} /> 
-                    <Typography variant="body2" fontWeight={device.showChart ? 'bold' : 'normal'}>Chart</Typography>
+                  <Box onClick={() => setDevice(prev => ({ ...prev, showChart: true }))} sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, bgcolor: device.showChart ? '#fff3e0' : 'transparent', p: 0.5, borderRadius: 1 }}>
+                    <InsertChartIcon sx={{ color: '#ff9800' }} /> <Typography variant="body2" fontWeight={device.showChart ? 'bold' : 'normal'}>Chart</Typography>
                   </Box>
 
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' } }}>
+                  <Box onClick={() => setDevice(prev => ({ ...prev, showDatetime: true }))} sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, bgcolor: device.showDatetime ? '#fce4ec' : 'transparent', p: 0.5, borderRadius: 1 }}>
+                    <DateRangeIcon sx={{ color: '#e91e63' }} /> <Typography variant="body2" fontWeight={device.showDatetime ? 'bold' : 'normal'}>Datetime</Typography>
+                  </Box>
+
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, p: 0.5 }}>
                     <SpeedIcon sx={{ color: '#9c27b0' }} /> <Typography variant="body2">Gauge</Typography>
                   </Box>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' } }}>
+                  
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', '&:hover': { color: '#1976d2' }, p: 0.5 }}>
                     <MapIcon sx={{ color: '#4caf50' }} /> <Typography variant="body2">Map</Typography>
                   </Box>
-                  <Divider />
-                  <Typography variant="caption" color="text.secondary">
-                    * ลากกล่องบนหน้าจอเพื่อจัดวางตำแหน่งได้เลย
+
+                  <Divider sx={{ my: 1 }} />
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 0.5 }}>
+                    * Click tool to open, drag on canvas to arrange.
                   </Typography>
                </Box>
             </Box>
