@@ -106,6 +106,59 @@
 2. **Backend (Node.js):** ทำหน้าที่เป็นตัวกลาง (Middleware/Server) ประมวลผลคำสั่งจากหน้าเว็บและเชื่อมต่อกับฐานข้อมูล โดยใช้การสื่อสาร 2 รูปแบบคือ REST API และ gRPC
 3. **Database (MongoDB):** ทำหน้าที่จัดเก็บข้อมูลทั้งหมดของระบบ เช่น ข้อมูลผู้ใช้, ตั้งค่าอุปกรณ์ (Device Config), และประวัติข้อมูล (History Data)
 
+## 3.(Project Directory Tree)
+
+โครงสร้างของโปรเจกต์นี้ถูกแบ่งออกเป็น 2 ส่วนหลักๆ คือ `backend` (เซิร์ฟเวอร์) และ `frontend` (หน้าเว็บ) โดยมีรายละเอียดดังนี้:
+
+```text
+📦 react_lab01
+┣ 📂 backend                     # ระบบเซิร์ฟเวอร์และฐานข้อมูล (Node.js)
+┃ ┣ 📂 libs                      # โฟลเดอร์เก็บไลบรารีและโมเดลข้อมูล
+┃ ┃ ┣ 📜 passport.js           # จัดการการยืนยันตัวตน (Authentication)
+┃ ┃ ┗ 📜 schema.js             # โครงสร้างตารางฐานข้อมูล (Device, User, HistoryData)
+┃ ┣ 📂 proto                     # โฟลเดอร์เก็บไฟล์ Protocol Buffers
+┃ ┃ ┗ 📜 db.proto              # ไฟล์กำหนดโพรโทคอลสำหรับการสื่อสารด้วย gRPC
+┃ ┣ 📂 routes                    # โฟลเดอร์จัดการ API Endpoints
+┃ ┃ ┣ 📜 preferences.js        # API สำหรับการดึงและอัปเดตข้อมูลตั้งค่า/อุปกรณ์
+┃ ┃ ┗ 📜 users.js              # API สำหรับจัดการข้อมูลผู้ใช้งาน
+┃ ┣ 📜 app.js                  # ไฟล์หลักสำหรับรัน Express / REST API
+┃ ┣ 📜 common.js               # ฟังก์ชันตัวช่วย (Helpers) และการตั้งค่าพื้นฐาน
+┃ ┣ 📜 db.js                   # ไฟล์หลักสำหรับรัน gRPC Server และจัดการ MongoDB
+┃ ┣ 📜 package.json            # รายชื่อ Dependencies ฝั่ง Backend
+┃ ┗ 📜 package-lock.json
+┃
+┣ 📂 frontend                    # ระบบหน้าบ้าน (React.js)
+┃ ┣ 📂 public                  # ไฟล์ Static ของเว็บไซต์
+┃ ┃ ┣ 📜 index.html            # ไฟล์ HTML หลัก
+┃ ┃ ┣ 📜 favicon.ico
+┃ ┃ ┗ 📜 manifest.json
+┃ ┣ 📂 src                     # Source Code หลักของ React
+┃ ┃ ┣ 📂 components            # ชิ้นส่วน UI ขนาดเล็กที่ใช้ซ้ำได้ (Menu, Dialog, Scrollbar ฯลฯ)
+┃ ┃ ┣ 📂 config                # ไฟล์ตั้งค่าระบบหน้าบ้าน (Routes, Menu Items, Themes, Locales)
+┃ ┃ ┣ 📂 containers            # โครงสร้างหน้าเว็บหลัก (Layout, App, Page)
+┃ ┃ ┣ 📂 pages                 # หน้าจอต่างๆ ของระบบ
+┃ ┃ ┃ ┣ 📂 Dashboard           # หน้าจอ Dashboard หลัก
+┃ ┃ ┃ ┃ ┣ 📜 Dashboard.js      
+┃ ┃ ┃ ┃ ┗ 📜 Device.js         # ⭐ (ไฟล์หัวใจหลัก) จัดการตั้งค่าอุปกรณ์, สคริปต์เซนเซอร์, ระบบ Drag&Drop และกราฟ
+┃ ┃ ┃ ┣ 📂 SignIn              # หน้าเข้าสู่ระบบ
+┃ ┃ ┃ ┣ 📂 Users               # หน้าจัดการข้อมูลผู้ใช้งาน
+┃ ┃ ┃ ┗ 📂 ...                 # (หน้าอื่นๆ เช่น Home, About, SignUp, MyAccount)
+┃ ┃ ┣ 📂 providers             # ระบบ Context API (จัดการ Global State เช่น Auth, Theme, Locale)
+┃ ┃ ┣ 📂 utils                 # ฟังก์ชันอรรถประโยชน์ (Utility functions)
+┃ ┃ ┣ 📜 App.js                # Component หลักที่ครอบ Routes และ Providers ทั้งหมด
+┃ ┃ ┗ 📜 index.js              # จุดเริ่มต้นการทำงานและเรนเดอร์ React เข้าสู่ DOM
+┃ ┣ 📜 package.json            # รายชื่อ Dependencies ฝั่ง Frontend
+┃ ┣ 📜 package-lock.json
+┃ ┗ 📜 jsconfig.json
+┃
+┣ 📂 doc                         # เอกสารและไฟล์นำเสนอของโปรเจกต์
+┃ ┗ 📜 web.pptx
+┃
+┣ 📜 config.js                   # ตั้งค่าพื้นฐานระดับ Global ของโปรเจกต์
+┣ 📜 README.md                   # สรุปภาพรวมโปรเจกต์ (Overview)
+┣ 📜 DOCS.md                     # เอกสารคู่มือระบบแบบละเอียด (ไฟล์นี้)
+┗ 📜 .gitignore                  # กำหนดไฟล์ที่ไม่ต้องนำขึ้น Git (เช่น node_modules)
+
 ---
 
 ## 4.กระบวนการทำงานร่วมกันของระบบ (System Workflow: Detailed Step-by-Step)
