@@ -112,13 +112,13 @@
 
 ```text
 📦 react_lab01
-┣ 📂 backend                     # ระบบเซิร์ฟเวอร์และฐานข้อมูล (Node.js)
-┃ ┣ 📂 libs                      # โฟลเดอร์เก็บไลบรารีและโมเดลข้อมูล
+┣ 📂 backend                   # ระบบเซิร์ฟเวอร์และฐานข้อมูล (Node.js)
+┃ ┣ 📂 libs                    # โฟลเดอร์เก็บไลบรารีและโมเดลข้อมูล
 ┃ ┃ ┣ 📜 passport.js           # จัดการการยืนยันตัวตน (Authentication)
 ┃ ┃ ┗ 📜 schema.js             # โครงสร้างตารางฐานข้อมูล (Device, User, HistoryData)
-┃ ┣ 📂 proto                     # โฟลเดอร์เก็บไฟล์ Protocol Buffers
+┃ ┣ 📂 proto                   # โฟลเดอร์เก็บไฟล์ Protocol Buffers
 ┃ ┃ ┗ 📜 db.proto              # ไฟล์กำหนดโพรโทคอลสำหรับการสื่อสารด้วย gRPC
-┃ ┣ 📂 routes                    # โฟลเดอร์จัดการ API Endpoints
+┃ ┣ 📂 routes                  # โฟลเดอร์จัดการ API Endpoints
 ┃ ┃ ┣ 📜 preferences.js        # API สำหรับการดึงและอัปเดตข้อมูลตั้งค่า/อุปกรณ์
 ┃ ┃ ┗ 📜 users.js              # API สำหรับจัดการข้อมูลผู้ใช้งาน
 ┃ ┣ 📜 app.js                  # ไฟล์หลักสำหรับรัน Express / REST API
@@ -127,7 +127,7 @@
 ┃ ┣ 📜 package.json            # รายชื่อ Dependencies ฝั่ง Backend
 ┃ ┗ 📜 package-lock.json
 ┃
-┣ 📂 frontend                    # ระบบหน้าบ้าน (React.js)
+┣ 📂 frontend                  # ระบบหน้าบ้าน (React.js)
 ┃ ┣ 📂 public                  # ไฟล์ Static ของเว็บไซต์
 ┃ ┃ ┣ 📜 index.html            # ไฟล์ HTML หลัก
 ┃ ┃ ┣ 📜 favicon.ico
@@ -158,6 +158,7 @@
 ┣ 📜 README.md                   # สรุปภาพรวมโปรเจกต์ (Overview)
 ┣ 📜 DOCS.md                     # เอกสารคู่มือระบบแบบละเอียด (ไฟล์นี้)
 ┗ 📜 .gitignore                  # กำหนดไฟล์ที่ไม่ต้องนำขึ้น Git (เช่น node_modules)
+```
 
 ---
 
