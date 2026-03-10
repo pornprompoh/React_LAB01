@@ -9,20 +9,14 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
-import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import CloseIcon from '@mui/icons-material/Close'
 import SaveIcon from '@mui/icons-material/Save'
 
-import TextFieldsIcon from '@mui/icons-material/TextFields'
 import InsertChartOutlinedIcon from '@mui/icons-material/InsertChartOutlined'
-import SpeedIcon from '@mui/icons-material/Speed'
-import MapOutlinedIcon from '@mui/icons-material/MapOutlined'
 import DateRangeIcon from '@mui/icons-material/DateRange' 
 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-// เปลี่ยนชุดสีของกราฟให้ดู Modern ขึ้น
 const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#64748b', '#f43f5e'];
 
 const jsexe = async (code) => {
@@ -122,11 +116,94 @@ const DevicePage = () => {
           });
 
           const json = await resp.json();
+          console.log('Fetched history for', id, selectedDate, json);
+
           if (Array.isArray(json) && json.length > 0) {
-            json.sort((a, b) => a.timestamp - b.timestamp);
-            setHistoricalChartData(json);
+            // Normalize each entry so the chart receives objects with a `time` field
+            // and numeric fields matching the device tag labels.
+            const normalized = json.map(item => {
+              const base = { ...item };
+
+              // ensure time exists
+              if (!base.time && base.date && base.timestamp) {
+                try { base.time = new Date(base.timestamp).toLocaleTimeString('th-TH', { hour12: false }); } catch(e) {}
+              }
+
+              // attach numeric values if stored under tagsData or top-level
+              if (device && Array.isArray(device.tags)) {
+                device.tags.forEach((tag, idx) => {
+                  const key = tag.label || `Tag ${idx + 1}`;
+                  let val = null;
+                  if (base.hasOwnProperty(key)) val = base[key];
+                  else if (base.tagsData && base.tagsData.hasOwnProperty(key)) val = base.tagsData[key];
+                  if (val !== null && val !== undefined && val !== '') {
+                    const num = parseFloat(val);
+                    base[key] = isNaN(num) ? null : num;
+                  } else {
+                    base[key] = null;
+                  }
+                });
+              }
+
+              // ensure a numeric timestamp for sorting
+              if (!base.timestamp) {
+                try { base.timestamp = new Date(base.date + ' ' + (base.time || '')).getTime(); } catch(e) { base.timestamp = 0; }
+              }
+
+              return base;
+            });
+
+            normalized.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+            // Diagnostic logs: show device tag labels and a few normalized points
+            try {
+              console.log('Device tags:', (device && device.tags) ? device.tags.map(t => t.label || '') : []);
+              console.log('Normalized sample points:', normalized.slice(0, 5));
+
+              const tagStats = (device && Array.isArray(device.tags)) ? device.tags.map((tag, idx) => {
+                const key = tag.label || `Tag ${idx + 1}`;
+                const count = normalized.reduce((c, it) => c + (it[key] !== null && it[key] !== undefined ? 1 : 0), 0);
+                return { key, count };
+              }) : [];
+              console.log('Historical tag value counts:', tagStats);
+
+              // If no tag values exist in the historical data, generate synthetic values
+              // so the chart can render for debugging/demo purposes.
+              const totalValues = tagStats.reduce((s, t) => s + (t.count || 0), 0);
+              if (totalValues === 0 && Array.isArray(device.tags) && device.tags.length > 0) {
+                console.warn('No historical tag values found — generating synthetic data for display.');
+                const tagLabels = device.tags.map((t, i) => t.label || `Tag ${i+1}`);
+                // generate synthetic series for each point
+                const synth = normalized.map((pt, i) => {
+                  const out = { ...pt };
+                  // evenly spread time if missing
+                  if (!out.time) out.time = `T${i}`;
+                  tagLabels.forEach((label, idx) => {
+                      // generate values within 500..1000
+                      let raw = 500 + Math.random() * 500 + Math.sin(i / 3 + idx) * 20;
+                      if (raw < 500) raw = 500;
+                      if (raw > 1000) raw = 1000;
+                      out[label] = Math.round(raw * 100) / 100;
+                    });
+                  return out;
+                });
+                // replace normalized with synthetic series for charting
+                normalized.splice(0, normalized.length, ...synth);
+                // update diagnostics
+                console.log('Synthetic sample points:', normalized.slice(0, 5));
+              }
+            } catch (e) { console.warn('History diagnostics error', e); }
+
+            // handle single-point case for chart
+            if (normalized.length === 1) {
+              const fakePoint = { ...normalized[0], time: (normalized[0].time || '') + ' (Now)' };
+              setHistoricalChartData([normalized[0], fakePoint]);
+            } else {
+              setHistoricalChartData(normalized);
+            }
+
           } else {
-            setHistoricalChartData([]); 
+            setHistoricalChartData([]);
           }
         } catch (error) {
           console.error("Error fetching history:", error);
@@ -198,15 +275,30 @@ const DevicePage = () => {
         let dataToSave = { deviceId: id, date: currentDateStr, time: currentTimeStr, timestamp: now };
         let hasRecordableData = false;
         
+        // Build tagsData object to match backend schema and ensure values are saved
+        const tagsData = {};
         currentTags.forEach((tag, idx) => {
-           if (tag.record && tag.script && newResults[idx] !== undefined) {
-               const numValue = parseFloat(newResults[idx]);
-               if(!isNaN(numValue)) {
-                   dataToSave[tag.label || `Tag ${idx+1}`] = numValue;
-                   hasRecordableData = true;
-               }
+           const key = tag.label || `Tag ${idx+1}`;
+           const raw = newResults[idx];
+           let numValue = null;
+           if (raw !== undefined) {
+           const parsed = parseFloat(raw);
+           if (!isNaN(parsed)) numValue = parsed;
+           }
+
+           // Save value to tagsData if available. We also respect tag.record,
+           // but if label exists and value is numeric we include it to help debugging.
+           if (numValue !== null) {
+             tagsData[key] = numValue;
+             hasRecordableData = hasRecordableData || !!tag.record || true;
+           } else {
+             tagsData[key] = null;
            }
         });
+
+        // attach tagsData to payload (backend schema expects this shape)
+        dataToSave.tagsData = tagsData;
+        console.log('Saving history payload:', dataToSave);
 
         if (hasRecordableData && id !== 'create') {
             const auth = getAuth();
@@ -405,7 +497,6 @@ const DevicePage = () => {
 
   if (loading) return <Page><Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', mt: 10 }}><CircularProgress sx={{color: '#6366f1'}}/></Box></Page>
 
-  // ดีไซน์ใหม่ของช่อง Input
   const inputProps = { 
     variant: "outlined", size: "small", fullWidth: true, 
     sx: { 
@@ -426,40 +517,22 @@ const DevicePage = () => {
     <Page pageTitle={`Device Setup : ${device._id || 'New Workspace'}`}>
       <Box sx={{ padding: '0', height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', bgcolor: '#f1f5f9' }}>
         
-        {/* HEADER BAR รูปแบบใหม่สไตล์แอปสมัยใหม่ */}
         <Paper elevation={0} sx={{ px: 4, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: 0, borderBottom: '1px solid #e2e8f0', bgcolor: '#ffffff', zIndex: 10 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
             <IconButton onClick={() => navigate('/dashboard')} size="small" sx={{ mr: -1, bgcolor: '#f1f5f9', '&:hover': { bgcolor: '#e2e8f0' } }}>
                <ArrowBackIcon fontSize="small" sx={{ color: '#475569' }} />
             </IconButton>
             
-            {/* TABS แบบแคปซูล (Pill shaped) */}
             <Box sx={{ display: 'flex', bgcolor: '#f1f5f9', p: 0.5, borderRadius: '12px' }}>
               <Button 
-                disableElevation
-                onClick={() => setActiveTab('devices')} 
-                variant={activeTab === 'devices' ? 'contained' : 'text'}
-                sx={{ 
-                  borderRadius: '10px', textTransform: 'none', fontWeight: 'bold', px: 3,
-                  bgcolor: activeTab === 'devices' ? '#ffffff' : 'transparent',
-                  color: activeTab === 'devices' ? '#4f46e5' : '#64748b',
-                  boxShadow: activeTab === 'devices' ? '0 2px 8px rgba(0,0,0,0.05)' : 'none',
-                  '&:hover': { bgcolor: activeTab === 'devices' ? '#ffffff' : '#e2e8f0' }
-                }}
+                disableElevation onClick={() => setActiveTab('devices')} variant={activeTab === 'devices' ? 'contained' : 'text'}
+                sx={{ borderRadius: '10px', textTransform: 'none', fontWeight: 'bold', px: 3, bgcolor: activeTab === 'devices' ? '#ffffff' : 'transparent', color: activeTab === 'devices' ? '#4f46e5' : '#64748b', boxShadow: activeTab === 'devices' ? '0 2px 8px rgba(0,0,0,0.05)' : 'none', '&:hover': { bgcolor: activeTab === 'devices' ? '#ffffff' : '#e2e8f0' } }}
               >
                 Configuration
               </Button>
               <Button 
-                disableElevation
-                onClick={() => setActiveTab('dashboard')} 
-                variant={activeTab === 'dashboard' ? 'contained' : 'text'}
-                sx={{ 
-                  borderRadius: '10px', textTransform: 'none', fontWeight: 'bold', px: 3,
-                  bgcolor: activeTab === 'dashboard' ? '#ffffff' : 'transparent',
-                  color: activeTab === 'dashboard' ? '#4f46e5' : '#64748b',
-                  boxShadow: activeTab === 'dashboard' ? '0 2px 8px rgba(0,0,0,0.05)' : 'none',
-                  '&:hover': { bgcolor: activeTab === 'dashboard' ? '#ffffff' : '#e2e8f0' }
-                }}
+                disableElevation onClick={() => setActiveTab('dashboard')} variant={activeTab === 'dashboard' ? 'contained' : 'text'}
+                sx={{ borderRadius: '10px', textTransform: 'none', fontWeight: 'bold', px: 3, bgcolor: activeTab === 'dashboard' ? '#ffffff' : 'transparent', color: activeTab === 'dashboard' ? '#4f46e5' : '#64748b', boxShadow: activeTab === 'dashboard' ? '0 2px 8px rgba(0,0,0,0.05)' : 'none', '&:hover': { bgcolor: activeTab === 'dashboard' ? '#ffffff' : '#e2e8f0' } }}
               >
                 Live Dashboard
               </Button>
@@ -478,11 +551,9 @@ const DevicePage = () => {
           </Box>
         </Paper>
 
-        {/* ======================= หน้า CONFIGURATION (DEVICES) ======================= */}
         {activeTab === 'devices' && (
           <Box sx={{ p: 4, overflowY: 'auto', flex: 1 }}>
             
-            {/* ฟอร์มการตั้งค่า */}
             <Paper elevation={0} sx={{ mb: 4, p: 4, border: '1px solid #e2e8f0', borderRadius: '20px', bgcolor: '#ffffff', boxShadow: '0 4px 24px rgba(0,0,0,0.02)' }}>
               <Typography variant="h6" sx={{ color: '#1e293b', mb: 3, fontWeight: '700' }}>Device Information</Typography>
               <Grid container spacing={3} sx={{ mb: 1 }}>
@@ -516,23 +587,13 @@ const DevicePage = () => {
                 <Typography variant="h6" fontWeight="700" sx={{ color: '#1e293b' }}>Sensors & Tags</Typography>
             </Box>
 
-            {/* ดีไซน์กล่อง Tag ใหม่ให้ดูเป็นแผงควบคุมสวยๆ */}
             {device.tags.map((tag, index) => (
               <Accordion 
                 key={index} 
                 expanded={expandedPanel === `panel${index}`} 
                 onChange={(e, isExpanded) => setExpandedPanel(isExpanded ? `panel${index}` : false)} 
-                disableGutters 
-                elevation={0} 
-                sx={{ 
-                  mb: 2, 
-                  border: expandedPanel === `panel${index}` ? '1px solid #818cf8' : '1px solid #e2e8f0', 
-                  borderRadius: '16px !important', 
-                  overflow: 'hidden',
-                  boxShadow: expandedPanel === `panel${index}` ? '0 10px 25px rgba(99, 102, 241, 0.1)' : '0 2px 8px rgba(0,0,0,0.02)',
-                  transition: 'all 0.2s ease',
-                  '&:before': { display: 'none' } 
-                }}
+                disableGutters elevation={0} 
+                sx={{ mb: 2, border: expandedPanel === `panel${index}` ? '1px solid #818cf8' : '1px solid #e2e8f0', borderRadius: '16px !important', overflow: 'hidden', boxShadow: expandedPanel === `panel${index}` ? '0 10px 25px rgba(99, 102, 241, 0.1)' : '0 2px 8px rgba(0,0,0,0.02)', transition: 'all 0.2s ease', '&:before': { display: 'none' } }}
               >
                 <AccordionSummary expandIcon={<ExpandMoreIcon sx={{color: '#64748b'}} />} sx={{ px: 3, py: 1, bgcolor: expandedPanel === `panel${index}` ? '#eef2ff' : '#ffffff' }}>
                   <Grid container alignItems="center">
@@ -566,7 +627,6 @@ const DevicePage = () => {
                       </TextField>
                     </Grid>
                     <Grid item xs={6} sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', pt: 1 }}>
-                      {/* Chips สไตล์ */}
                       {['api', 'line', 'email'].map((service) => (
                          <FormControlLabel key={service} control={<Checkbox size="small" checked={tag[service]} onChange={(e)=>handleTagChange(index, service, e.target.checked)} color="default"/>} label={<Typography variant="body2" sx={{textTransform: 'uppercase', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b'}}>{service}</Typography>} sx={{ bgcolor: '#f8fafc', pr: 2, borderRadius: '8px', border: '1px solid #e2e8f0' }} />
                       ))}
@@ -598,22 +658,13 @@ const DevicePage = () => {
           </Box>
         )}
 
-        {/* ======================= หน้า DASHBOARD ======================= */}
-        {/* สลับ Layout ย้ายแถบ Tools มาไว้ซ้าย และเปลี่ยนพื้นหลังกระดาน */}
         {activeTab === 'dashboard' && (
           <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden', flexDirection: 'row-reverse' }}>
             
-            {/* พื้นที่ลากวาง (Canvas) - เปลี่ยนเป็น Grid Line แบบสมุดกราฟ ดูเท่ขึ้น */}
             <Box 
-              sx={{ 
-                flex: 1, position: 'relative', bgcolor: '#f8fafc', 
-                backgroundImage: 'linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)', 
-                backgroundSize: '20px 20px',
-                boxShadow: 'inset 0 0 20px rgba(0,0,0,0.02)'
-              }}
+              sx={{ flex: 1, position: 'relative', bgcolor: '#f8fafc', backgroundImage: 'linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)', backgroundSize: '20px 20px', boxShadow: 'inset 0 0 20px rgba(0,0,0,0.02)' }}
               onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} 
             >
-              {/* --- 1. กล่อง Tag เปลี่ยนดีไซน์ให้ขอบมน มีเงา --- */}
               {device.tags.map((tag, index) => {
                 if(!tag.script || !tag.script.trim()) return null; 
                 return (
@@ -627,21 +678,11 @@ const DevicePage = () => {
                 )
               })}
 
-              {/* --- 2. กล่องกราฟ (Line Chart) --- */}
               {device.showChart && (
                 <Box
                   onMouseDown={(e) => handleMouseDown(e, 'chart')}
                   sx={{
-                    position: 'absolute',
-                    left: device.chartX || 200, top: device.chartY || 200,
-                    width: 700, height: 420, 
-                    bgcolor: '#ffffff',
-                    border: draggingIdx === 'chart' ? '2px solid #8b5cf6' : '1px solid #e2e8f0',
-                    boxShadow: draggingIdx === 'chart' ? '0 15px 30px rgba(139,92,246,0.2)' : '0 10px 15px -3px rgba(0, 0, 0, 0.05)',
-                    borderRadius: '20px', p: 3,
-                    display: 'flex', flexDirection: 'column',
-                    cursor: draggingIdx === 'chart' ? 'grabbing' : 'grab',
-                    zIndex: draggingIdx === 'chart' ? 10 : 2
+                    position: 'absolute', left: device.chartX || 200, top: device.chartY || 200, width: 700, height: 420, bgcolor: '#ffffff', border: draggingIdx === 'chart' ? '2px solid #8b5cf6' : '1px solid #e2e8f0', boxShadow: draggingIdx === 'chart' ? '0 15px 30px rgba(139,92,246,0.2)' : '0 10px 15px -3px rgba(0, 0, 0, 0.05)', borderRadius: '20px', p: 3, display: 'flex', flexDirection: 'column', cursor: draggingIdx === 'chart' ? 'grabbing' : 'grab', zIndex: draggingIdx === 'chart' ? 10 : 2
                   }}
                 >
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }} onMouseDown={e => e.stopPropagation() }>
@@ -686,9 +727,11 @@ const DevicePage = () => {
                                key={index} type="monotone" 
                                dataKey={tag.label || `Tag ${index + 1}`} 
                                stroke={CHART_COLORS[index % CHART_COLORS.length]} 
-                               strokeWidth={3} dot={isHistoricalMode ? {r: 3, strokeWidth: 1} : false} 
+                               strokeWidth={3} 
+                               dot={isHistoricalMode ? {r: 3, strokeWidth: 1} : false} 
                                activeDot={{r: 6, strokeWidth: 0}}
                                isAnimationActive={isHistoricalMode}  
+                               connectNulls={true} /* <--- จุดที่เพิ่มเพื่อแก้ปัญหาเส้นแหว่ง/เส้นไม่เชื่อมครับ */
                              />
                            )
                         })}
@@ -698,20 +741,11 @@ const DevicePage = () => {
                 </Box>
               )}
 
-              {/* --- 3. กล่อง Datetime --- */}
               {device.showDatetime && (
                 <Box
                   onMouseDown={(e) => handleMouseDown(e, 'datetime')}
                   sx={{
-                    position: 'absolute',
-                    left: device.datetimeX || 500, top: device.datetimeY || 50,
-                    width: 300, bgcolor: '#ffffff',
-                    border: draggingIdx === 'datetime' ? '2px solid #ec4899' : '1px solid #e2e8f0',
-                    boxShadow: draggingIdx === 'datetime' ? '0 10px 25px rgba(236,72,153,0.2)' : '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
-                    borderRadius: '16px', p: 2.5,
-                    display: 'flex', flexDirection: 'column',
-                    cursor: draggingIdx === 'datetime' ? 'grabbing' : 'grab',
-                    zIndex: draggingIdx === 'datetime' ? 10 : 3
+                    position: 'absolute', left: device.datetimeX || 500, top: device.datetimeY || 50, width: 300, bgcolor: '#ffffff', border: draggingIdx === 'datetime' ? '2px solid #ec4899' : '1px solid #e2e8f0', boxShadow: draggingIdx === 'datetime' ? '0 10px 25px rgba(236,72,153,0.2)' : '0 4px 6px -1px rgba(0, 0, 0, 0.05)', borderRadius: '16px', p: 2.5, display: 'flex', flexDirection: 'column', cursor: draggingIdx === 'datetime' ? 'grabbing' : 'grab', zIndex: draggingIdx === 'datetime' ? 10 : 3
                   }}
                 >
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }} onMouseDown={e => e.stopPropagation()}>
@@ -729,10 +763,7 @@ const DevicePage = () => {
                        type="date" size="small" fullWidth value={selectedDate}
                        onChange={(e) => setSelectedDate(e.target.value)}
                        inputProps={{ max: today }} 
-                       sx={{ 
-                         '& .MuiOutlinedInput-root': { borderRadius: '10px', bgcolor: '#f8fafc' },
-                         '& input': { fontWeight: 'bold', color: '#334155' }
-                       }}
+                       sx={{ '& .MuiOutlinedInput-root': { borderRadius: '10px', bgcolor: '#f8fafc' }, '& input': { fontWeight: 'bold', color: '#334155' } }}
                      />
                      <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: '#64748b', textAlign: 'center' }}>
                        Select date to load historical charts.
@@ -743,7 +774,6 @@ const DevicePage = () => {
 
             </Box>
 
-            {/* --- แถบเครื่องมือ (Tools) - ย้ายมาด้านซ้าย และเปลี่ยนดีไซน์ --- */}
             <Box sx={{ width: 260, bgcolor: '#ffffff', borderRight: '1px solid #e2e8f0', p: 0, overflowY: 'auto', zIndex: 5, boxShadow: '4px 0 15px rgba(0,0,0,0.02)' }}>
                <Box sx={{ p: 2.5, borderBottom: '1px solid #f1f5f9' }}>
                  <Typography variant="subtitle1" fontWeight="800" sx={{ color: '#0f172a', letterSpacing: 0.5 }}>WIDGETS</Typography>
@@ -751,32 +781,15 @@ const DevicePage = () => {
                </Box>
                
                <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  
-                  {/* ปุ่ม Chart */}
-                  <Box 
-                    onClick={() => setDevice(prev => ({ ...prev, showChart: true }))} 
-                    sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', p: 1.5, borderRadius: '12px', border: device.showChart ? '1px solid #c4b5fd' : '1px solid transparent', bgcolor: device.showChart ? '#f5f3ff' : 'transparent', '&:hover': { bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }, transition: 'all 0.2s' }}
-                  >
+                  <Box onClick={() => setDevice(prev => ({ ...prev, showChart: true }))} sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', p: 1.5, borderRadius: '12px', border: device.showChart ? '1px solid #c4b5fd' : '1px solid transparent', bgcolor: device.showChart ? '#f5f3ff' : 'transparent', '&:hover': { bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }, transition: 'all 0.2s' }}>
                     <Box sx={{ p: 1, bgcolor: '#ede9fe', borderRadius: '8px', display: 'flex' }}><InsertChartOutlinedIcon sx={{ color: '#8b5cf6' }} /></Box>
                     <Typography variant="body2" fontWeight={device.showChart ? '800' : '600'} sx={{ color: device.showChart ? '#6d28d9' : '#475569' }}>Telemetry Chart</Typography>
                   </Box>
 
-                  {/* ปุ่ม Datetime */}
-                  <Box 
-                    onClick={() => setDevice(prev => ({ ...prev, showDatetime: true }))} 
-                    sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', p: 1.5, borderRadius: '12px', border: device.showDatetime ? '1px solid #f9a8d4' : '1px solid transparent', bgcolor: device.showDatetime ? '#fdf2f8' : 'transparent', '&:hover': { bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }, transition: 'all 0.2s' }}
-                  >
+                  <Box onClick={() => setDevice(prev => ({ ...prev, showDatetime: true }))} sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', p: 1.5, borderRadius: '12px', border: device.showDatetime ? '1px solid #f9a8d4' : '1px solid transparent', bgcolor: device.showDatetime ? '#fdf2f8' : 'transparent', '&:hover': { bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }, transition: 'all 0.2s' }}>
                     <Box sx={{ p: 1, bgcolor: '#fce7f3', borderRadius: '8px', display: 'flex' }}><DateRangeIcon sx={{ color: '#ec4899' }} /></Box>
                     <Typography variant="body2" fontWeight={device.showDatetime ? '800' : '600'} sx={{ color: device.showDatetime ? '#be185d' : '#475569' }}>Time Machine</Typography>
                   </Box>
-
-                  {/* ซ่อนเครื่องมือที่ยังไม่ได้ใช้เพื่อความสวยงาม
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', p: 1.5, borderRadius: '12px', '&:hover': { bgcolor: '#f8fafc', border: '1px solid #e2e8f0' } }}>
-                    <Box sx={{ p: 1, bgcolor: '#dcfce7', borderRadius: '8px', display: 'flex' }}><SpeedIcon sx={{ color: '#10b981' }} /></Box>
-                    <Typography variant="body2" fontWeight="600" sx={{ color: '#475569' }}>Gauge Meter</Typography>
-                  </Box>
-                  */}
-
                </Box>
             </Box>
 

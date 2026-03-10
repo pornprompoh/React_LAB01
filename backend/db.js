@@ -24,7 +24,7 @@ const dbaseproject = grpc.loadPackageDefinition(packageDefinition).dbaseproject;
 const {
   userSchema,
   deviceSchema, 
-  historySchema // <-- เพิ่มตัวนี้
+  historySchema 
 } = require('./libs/schema');
 // -------------------------------
 
@@ -62,7 +62,6 @@ function baseConnect (name,) {
 }
 
 async function createDocument (call, cb) {
-  // console.log('createDocument ->', call.request.collection, );
   const obj = {
     collection: call.request.collection,
     query: call.request.query,
@@ -73,7 +72,6 @@ async function createDocument (call, cb) {
   if (base)  {    
     const Model = base.models[call.request.collection]
     
-    // --- [เพิ่มระบบป้องกัน (Safeguard) ป้องกันระบบเด้งหลุด] ---
     if (!Model) {
       console.error(`Create Error: Model '${call.request.collection}' not found. Please register it.`);
       return cb(null, obj);
@@ -83,7 +81,6 @@ async function createDocument (call, cb) {
     
     if (!data._id)   data._id = new mongoose.Types.ObjectId()+''
     
-    // --- [แก้ไขจาก insertOne เป็น create ซึ่งเป็นมาตรฐานของ Mongoose] ---
     Model.create(data).then(function (resp) { 
       if (resp)  obj.data = JSON.stringify([resp])
       cb(null, obj)
@@ -98,7 +95,6 @@ async function createDocument (call, cb) {
 }
 
 async function readDocument (call, cb) {
-  // console.log('readDocument ->', call.request.collection);
   const obj = {
     collection: call.request.collection,
     query: call.request.query,
@@ -125,18 +121,11 @@ async function readDocument (call, cb) {
     let select = null
     if (call.request.select && call.request.select != '')  select = JSON.parse(call.request.select)
 
-    if (Object.keys(query).length)  {      
-      Model.findOne(query).populate(populate).select(select).then(function (resp) { 
-        if (resp)  obj.data = JSON.stringify([resp])
-        cb(null, obj)
-      }).catch(err => cb(null, obj));  
-    }
-    else  {
-      Model.find(query).populate(populate).select(select).then(function (resp) { 
-        if (resp)  obj.data = JSON.stringify(resp)
-        cb(null, obj)
-      }).catch(err => cb(null, obj));  
-    }
+    // --- [แก้ไขแล้ว!] ใช้ Model.find() ดึงข้อมูลทั้งหมดเสมอ ไม่ต้องใช้ findOne ---
+    Model.find(query).populate(populate).select(select).then(function (resp) { 
+      if (resp)  obj.data = JSON.stringify(resp)
+      cb(null, obj)
+    }).catch(err => cb(null, obj));  
 
   }
   else  {
@@ -164,7 +153,7 @@ async function updateDocument (call, cb) {
     const query = JSON.parse(call.request.query)
     let data = JSON.parse(call.request.data)
 
-    delete data._id; // ป้องกัน Error แก้ไข _id
+    delete data._id; 
 
     Model.updateOne(query, { $set: data } ).then(function (resp) { 
       if (resp)  {
@@ -186,7 +175,6 @@ async function updateDocument (call, cb) {
 }
 
 async function deleteDocument (call, cb) {
-  // console.log('deleteDocument ->', call.request.collection);
   const obj = {
     collection: call.request.collection,
     query: call.request.query,
@@ -262,11 +250,9 @@ async function main ()  {
   }
   
   if (db.MainBase)  {
-    // --- [2. ลงทะเบียน Model ให้ครบตรงนี้ครับ] ---
     db.MainBase.model('User', userSchema);
     db.MainBase.model('Device', deviceSchema); 
-    db.MainBase.model('HistoryData', historySchema); // <-- เพิ่มบรรทัดนี้
-    // ------------------------------------
+    db.MainBase.model('HistoryData', historySchema); 
   }
   else  {
     main()
@@ -282,7 +268,6 @@ async function main ()  {
   console.log("Dbase Server port ("+cfg.dbasePort+") start ->", dateTime.getDate()+'/'+(dateTime.getMonth()+1)+'/'+dateTime.getFullYear(), 
   dateTime.getHours()+':'+dateTime.getMinutes()+':'+dateTime.getSeconds());  
 
-  // --- ส่วนสร้าง Admin เริ่มต้น (เหมือนเดิม) ---
   let pwd = await createPassword('Default@1234');
   let user = null
 
