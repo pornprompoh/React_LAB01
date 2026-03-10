@@ -265,7 +265,7 @@ async function main ()  {
     // --- [2. ลงทะเบียน Model ให้ครบตรงนี้ครับ] ---
     db.MainBase.model('User', userSchema);
     db.MainBase.model('Device', deviceSchema); 
-    db.MainBase.model('HistoryData', historySchema); // <-- เพิ่มบรรทัดนี้แล้ว!
+    db.MainBase.model('HistoryData', historySchema); // <-- เพิ่มบรรทัดนี้
     // ------------------------------------
   }
   else  {
