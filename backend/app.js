@@ -15,7 +15,7 @@ const {
   createPassword,
 } = require('./common')
 
-const db = require('./db')
+const db = require('./db-client')
 const scriptScheduler = require('./libs/scriptScheduler')
 const { startServer: startJsExeServer } = require('./server-jsexe')
 

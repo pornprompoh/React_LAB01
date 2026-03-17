@@ -1,10 +1,15 @@
 // ========================================
-// Layer 2: Backend Database Client
-// เชื่อมต่อไปยัง Database Service (port 3301)
+// Layer 3: Database Service (gRPC Server)
+// Port: 3301
+// Run: npm run db or node db
 // ========================================
 
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
+const mongoose = require('mongoose');
+const { readcfg } = require('./common');
+
+const cfg = readcfg();
 
 // Load Proto Definition
 const packageDefinition = protoLoader.loadSync(
@@ -20,150 +25,242 @@ const packageDefinition = protoLoader.loadSync(
 
 const dbaseproject = grpc.loadPackageDefinition(packageDefinition).dbaseproject;
 
-// Create gRPC Client (connects to server-db.js on port 3301)
-const dbClient = new dbaseproject.DbaseProject(
-  'localhost:3301',
-  grpc.credentials.createInsecure()
-);
+// Load Schemas
+const { userSchema, deviceSchema, historySchema } = require('./libs/schema');
 
-/**
- * Initialize gRPC Client connection
- * This is called from app.js during server startup
- */
-async function grpcInit() {
+// ==================== DATABASE CONNECTION ====================
+let MainBase = null;
+
+async function baseConnect(name) {
   return new Promise((resolve, reject) => {
-    // Test connection by calling dbIsReady
-    dbClient.dbIsReady({}, (err, response) => {
-      if (err) {
-        console.error('❌ Database Service connection failed:', err.message);
-        reject(err);
-      } else if (response && response.status) {
-        console.log('✅ Database Service connected on port 3301');
-        resolve(true);
-      } else {
-        console.error('❌ Database Service not ready');
-        reject(new Error('Database Service not ready'));
-      }
+    let dbaseURL = 'mongodb://127.0.0.1:27017/';
+    if (cfg.dbaseURL) dbaseURL = cfg.dbaseURL;
+
+    const conn = mongoose.createConnection(dbaseURL + name);
+
+    conn.on('connected', () => {
+      console.log('\x1b[33m%s\x1b[0m', 'Connect to ->', dbaseURL + name);
+      MainBase = conn;
+
+      // Register Schemas
+      MainBase.model('User', userSchema);
+      MainBase.model('Device', deviceSchema);
+      MainBase.model('HistoryData', historySchema);
+
+      resolve(conn);
+    });
+
+    conn.on('error', (err) => {
+      console.log('\x1b[31m%s\x1b[0m', 'MongoDB Error ->', err.message);
+      reject(err);
+    });
+
+    conn.on('disconnected', () => {
+      console.log('\x1b[31m%s\x1b[0m', 'Disconnect from MongoDB');
+      MainBase = null;
+      reject(new Error('MongoDB Disconnected'));
     });
   });
 }
 
-/**
- * Call Database Service to Create Document
- */
-async function createDocument(request) {
-  return new Promise((resolve, reject) => {
-    dbClient.createDocument(request, (err, response) => {
-      if (err) {
-        reject(new Error(`Create Error: ${err.message}`));
-      } else {
-        resolve(response);
-      }
+// ==================== gRPC SERVICE IMPLEMENTATION ====================
+
+async function createDocument(call, callback) {
+  try {
+    if (!MainBase) {
+      throw new Error('Database not connected');
+    }
+
+    const { collection, data } = call.request;
+    const Model = MainBase.model(collection);
+
+    const parsedData = JSON.parse(data);
+    if (!parsedData._id) {
+      parsedData._id = new mongoose.Types.ObjectId() + '';
+    }
+
+    const doc = await Model.create(parsedData);
+
+    callback(null, {
+      collection: collection,
+      data: JSON.stringify([doc])
     });
-  });
+  } catch (error) {
+    console.error('❌ Create Error:', error.message);
+    callback(null, {
+      collection: call.request.collection,
+      data: JSON.stringify([])
+    });
+  }
 }
 
-/**
- * Call Database Service to Read Document
- */
-async function readDocument(request) {
-  return new Promise((resolve, reject) => {
-    dbClient.readDocument(request, (err, response) => {
-      if (err) {
-        reject(new Error(`Read Error: ${err.message}`));
-      } else {
-        resolve(response);
-      }
+async function readDocument(call, callback) {
+  try {
+    if (!MainBase) {
+      throw new Error('Database not connected');
+    }
+
+    const { collection, query } = call.request;
+    const Model = MainBase.model(collection);
+
+    const parsedQuery = JSON.parse(query);
+    let result;
+
+    if (Object.keys(parsedQuery).length) {
+      result = await Model.findOne(parsedQuery);
+      result = result ? [result] : [];
+    } else {
+      result = await Model.find(parsedQuery);
+    }
+
+    callback(null, {
+      collection: collection,
+      data: JSON.stringify(result)
     });
-  });
+  } catch (error) {
+    console.error('❌ Read Error:', error.message);
+    callback(null, {
+      collection: call.request.collection,
+      data: JSON.stringify([])
+    });
+  }
 }
 
-/**
- * Call Database Service to Update Document
- */
-async function updateDocument(request) {
-  return new Promise((resolve, reject) => {
-    dbClient.updateDocument(request, (err, response) => {
-      if (err) {
-        reject(new Error(`Update Error: ${err.message}`));
-      } else {
-        resolve(response);
-      }
+async function updateDocument(call, callback) {
+  try {
+    if (!MainBase) {
+      throw new Error('Database not connected');
+    }
+
+    const { collection, query, data } = call.request;
+    const Model = MainBase.model(collection);
+
+    const parsedQuery = JSON.parse(query);
+    const parsedData = JSON.parse(data);
+
+    delete parsedData._id;
+
+    await Model.updateOne(parsedQuery, { $set: parsedData });
+
+    callback(null, {
+      collection: collection,
+      data: JSON.stringify({ success: true })
     });
-  });
+  } catch (error) {
+    console.error('❌ Update Error:', error.message);
+    callback(null, {
+      collection: call.request.collection,
+      data: JSON.stringify([])
+    });
+  }
 }
 
-/**
- * Call Database Service to Delete Document
- */
-async function deleteDocument(request) {
-  return new Promise((resolve, reject) => {
-    dbClient.deleteDocument(request, (err, response) => {
-      if (err) {
-        reject(new Error(`Delete Error: ${err.message}`));
-      } else {
-        resolve(response);
-      }
+async function deleteDocument(call, callback) {
+  try {
+    if (!MainBase) {
+      throw new Error('Database not connected');
+    }
+
+    const { collection, query } = call.request;
+    const Model = MainBase.model(collection);
+
+    const parsedQuery = JSON.parse(query);
+    await Model.deleteOne(parsedQuery);
+
+    callback(null, {
+      collection: collection,
+      data: JSON.stringify({ success: true })
     });
-  });
+  } catch (error) {
+    console.error('❌ Delete Error:', error.message);
+    callback(null, {
+      collection: call.request.collection,
+      data: JSON.stringify([])
+    });
+  }
 }
 
-/**
- * Call Database Service to Drop Database
- */
-async function dropDatabase(request) {
-  return new Promise((resolve, reject) => {
-    dbClient.dropDatabase(request, (err, response) => {
-      if (err) {
-        reject(new Error(`Drop DB Error: ${err.message}`));
-      } else {
-        resolve(response);
-      }
-    });
-  });
+async function dropDatabase(call, callback) {
+  try {
+    if (!MainBase) {
+      throw new Error('Database not connected');
+    }
+
+    await MainBase.dropDatabase();
+    await MainBase.close();
+
+    callback(null, { status: true });
+  } catch (error) {
+    console.error('❌ Drop DB Error:', error.message);
+    callback(null, { status: false });
+  }
 }
 
-/**
- * Call Database Service to Drop Collection
- */
-async function dropCollection(request) {
-  return new Promise((resolve, reject) => {
-    dbClient.dropCollection(request, (err, response) => {
-      if (err) {
-        reject(new Error(`Drop Collection Error: ${err.message}`));
-      } else {
-        resolve(response);
-      }
-    });
-  });
+async function dropCollection(call, callback) {
+  try {
+    if (!MainBase) {
+      throw new Error('Database not connected');
+    }
+
+    await MainBase.dropCollection(call.request.collection);
+    callback(null, { status: true });
+  } catch (error) {
+    console.error('❌ Drop Collection Error:', error.message);
+    callback(null, { status: false });
+  }
 }
 
-/**
- * Check if Database Service is ready
- */
-async function isDbReady() {
-  return new Promise((resolve) => {
-    dbClient.dbIsReady({}, (err, response) => {
-      if (err) {
-        console.error('DB Ready Check Error:', err.message);
-        resolve(false);
-      } else {
-        resolve(response && response.status ? true : false);
-      }
-    });
-  });
+async function dbIsReady(call, callback) {
+  const state = MainBase ? true : false;
+  callback(null, { status: state });
 }
 
-/**
- * Export all client functions
- */
-module.exports = {
-  grpcInit,
-  createDocument,
-  readDocument,
-  updateDocument,
-  deleteDocument,
-  dropDatabase,
-  dropCollection,
-  isDbReady
-};
+// ==================== START gRPC SERVER ====================
+async function startServer() {
+  try {
+    // Connect to MongoDB first
+    await baseConnect(cfg.baseName);
+    console.log('✅ Connected to MongoDB');
+
+    // Create gRPC Server
+    const server = new grpc.Server({
+      'grpc.max_send_message_length': 50 * 1024 * 1024,
+      'grpc.max_receive_message_length': 50 * 1024 * 1024
+    });
+
+    // Add Service
+    server.addService(dbaseproject.DbaseProject.service, {
+      createDocument: createDocument,
+      readDocument: readDocument,
+      updateDocument: updateDocument,
+      deleteDocument: deleteDocument,
+      dropDatabase: dropDatabase,
+      dropCollection: dropCollection,
+      dbIsReady: dbIsReady
+    });
+
+    // Bind and Start
+    server.bindAsync('0.0.0.0:' + cfg.dbasePort, grpc.ServerCredentials.createInsecure(), (err) => {
+      if (err) {
+        console.error('❌ Bind Error:', err);
+        process.exit(1);
+      }
+
+      server.start();
+      const dateTime = new Date();
+      console.log('✅ Database Service (gRPC Server) listening on port', cfg.dbasePort);
+      console.log('   Started at:', dateTime.toLocaleString());
+    });
+
+  } catch (error) {
+    console.error('❌ Server Error:', error.message);
+    process.exit(1);
+  }
+}
+
+// Start
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { startServer };
