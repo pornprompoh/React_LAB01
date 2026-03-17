@@ -75,11 +75,11 @@ function startServer() {
 
   // Add Service
   server.addService(jsexeProject.JsexeService.service, {
-    Execute: execute
+    execute: execute
   });
 
   // Bind and Start
-  server.bindAsync('0.0.0.0:3302', grpc.credentials.createInsecure(), (err) => {
+  server.bindAsync('0.0.0.0:3302', grpc.ServerCredentials.createInsecure(), (err) => {
     if (err) {
       console.error('❌ Bind Error:', err);
       process.exit(1);

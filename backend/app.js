@@ -17,6 +17,7 @@ const {
 
 const db = require('./db')
 const scriptScheduler = require('./libs/scriptScheduler')
+const { startServer: startJsExeServer } = require('./server-jsexe')
 
 let cfg = readcfg(true);
 
@@ -51,6 +52,15 @@ async function main () {
   } catch (error) {
     console.warn('⚠️  Script scheduler initialization error:', error.message)
     // Don't fail the whole app if scheduler fails
+  }
+
+  // Start JsExe Service (Script Execution Service)
+  try {
+    startJsExeServer()
+    console.log('✅ JsExe Service started on port 3302')
+  } catch (error) {
+    console.warn('⚠️  JsExe Service error:', error.message)
+    // Don't fail the whole app if JsExe Service fails
   }
 
   const app = express();

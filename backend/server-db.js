@@ -239,7 +239,7 @@ async function startServer() {
     });
 
     // Bind and Start
-    server.bindAsync('0.0.0.0:' + cfg.dbasePort, grpc.credentials.createInsecure(), (err) => {
+    server.bindAsync('0.0.0.0:' + cfg.dbasePort, grpc.ServerCredentials.createInsecure(), (err) => {
       if (err) {
         console.error('❌ Bind Error:', err);
         process.exit(1);
