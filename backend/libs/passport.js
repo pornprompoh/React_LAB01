@@ -1,72 +1,52 @@
 const JWTStrategy = require('passport-jwt').Strategy;
 const ExtractJWT = require('passport-jwt').ExtractJwt;
+const db = require('../db');
 
 const opts = {};
 opts.jwtFromRequest = ExtractJWT.fromAuthHeaderAsBearerToken();
 
 module.exports = (
   passport, 
-  dbase,
   privateKey,  
 ) => {
 
-  // opts.secretOrKey = 'secret';
   opts.secretOrKey = privateKey;
 
-  passport.use(new JWTStrategy(opts, (jwt_payload, cb) => {
-    console.log('passport ->', jwt_payload.userName, )
-    dbase.readDocument({ 
-      collection: 'User',
-      query: JSON.stringify({ userName: jwt_payload.userName, }),
-    }, (err, resp) => {
+  passport.use(new JWTStrategy(opts, async (jwt_payload, cb) => {
+    try {
+      console.log('passport ->', jwt_payload.userName);
 
-      let user = null
+      const response = await db.readDocument({
+        collection: 'User',
+        query: JSON.stringify({ userName: jwt_payload.userName }),
+      });
 
-      if (resp)  {
-        
-        let temp = JSON.parse(resp.data)
-        if (temp.length)  user = temp[0]
+      let user = null;
 
-        if (user)  {
-          return cb(null, user);
+      if (response) {
+        const temp = JSON.parse(response.data);
+        if (temp.length) {
+          user = temp[0];
         }
-        else  {
+
+        if (user) {
+          return cb(null, user);
+        } else {
           return cb(null, {
-            text: 'Users token error!',
+            text: 'User token error!',
           });
         }
-
-      }
-      else  {
-        console.log('\x1b[31m%s\x1b[0m', 'passport -> Users database connection error!');
+      } else {
+        console.error('❌ User database connection error!');
         return cb(null, {
-          text: 'Users database connection error!',
+          text: 'User database connection error!',
         });
       }
-
-/*       if (resp && resp.collection != 'error')  user = JSON.parse(resp.data)
-      // console.log('Passport ->', user);
-
-      if (err)  {
-        console.log('\x1b[31m%s\x1b[0m', 'passport -> Users database connection error!');
-        return cb(null, {
-          text: 'Users database connection error!',
-        });
-        // return cb(null, null)
-      }
-      else  {
-        if (user.userName == '')  {
-          return cb(null, {
-            text: 'Users token error!',
-          });
-          // return cb(null, null)
-        }
-        else  {
-          user.text = null;
-          return cb(null, user);
-        }
-      } */
-
-    })
+    } catch (error) {
+      console.error('❌ Passport Error:', error.message);
+      return cb(null, {
+        text: 'Passport authentication error!',
+      });
+    }
   }));
 }

@@ -1,9 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const passport = require('passport');
+const db = require('../db');
+const { executeScript } = require('../libs/scriptRunner');
+
+/**
+ * Middleware to handle authentication errors and return JSON
+ */
+const authMiddleware = (req, res, next) => {
+  passport.authenticate('jwt', { session: false }, (err, user, info) => {
+    if (err) {
+      return res.status(500).json({ error: 'Authentication error' });
+    }
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    req.user = user;
+    next();
+  })(req, res, next);
+};
 
 function restInit(
-  dbase, 
   readcfg, 
   createPassword,
 )  {
@@ -11,125 +28,131 @@ function restInit(
   let cfg = readcfg(false)
 
   router.get('/getConfig', function(req, res) {    
-    // console.log('/getConfig ->', req.body);
     cfg = readcfg(false)
     return res.json(cfg);
   });
 
-  router.post('/createDocument', passport.authenticate('jwt', { session: false }), function(req, res) {
-    (async () => {
-
+  router.post('/createDocument', authMiddleware, async function(req, res) {
+    try {
       console.log('/createDocument ->', req.body);
 
-      if (req.body.data.password)  req.body.data.password = await createPassword(req.body.data.password);
-
-      dbase.createDocument({
-        collection: req.body.collection,
-        data: JSON.stringify(req.body.data),
-      }, (err, resp) => {
-
-        console.log(err, resp)
-
-        if (resp)  return res.json(JSON.parse(resp.data))
-        else return res.json([])
-        
-      });  
-
-    })()
-  });
-
-  router.post('/readDocument', passport.authenticate('jwt', { session: false }), function(req, res) {
-    console.log('/readDocument ->', req.body);
-
-    let populate = null
-    if (req.body.populate) populate = JSON.stringify(req.body.populate)
-
-    let select = null
-    if (req.body.select) select = JSON.stringify(req.body.select)
-
-    dbase.readDocument({
-      collection: req.body.collection,
-      query: JSON.stringify(req.body.query),
-      populate: populate,
-      select: select,
-    }, (err, resp) => {      
-      
-      console.log(err, resp)
-
-      if (resp)  return res.json(JSON.parse(resp.data))
-      else return res.json([])
-
-    });      
-
-  });
-    
-  router.post('/updateDocument', passport.authenticate('jwt', { session: false }), function(req, res) {
-    (async () => { // 1. เพิ่ม async wrapper เพื่อให้ใช้ await ได้
-      console.log('/updateDocument ->', req.body);
-
-      // 2. เพิ่ม Logic ตรวจสอบและเข้ารหัสรหัสผ่าน
-      if (req.body.collection === 'User') {
-          // ถ้ามีรหัสผ่านส่งมา และไม่ใช่ค่าว่าง
-          if (req.body.data.password && req.body.data.data !== '') {
-              // (Optional) ป้องกันการ Hash ซ้ำ ถ้าค่าที่ส่งมาเป็น Hash อยู่แล้ว (ขึ้นต้นด้วย $2) จะไม่ทำอะไร
-              // แต่ถ้าเป็นรหัสปกติ ให้ทำการ Hash
-              if (!req.body.data.password.startsWith('$2')) {
-                  req.body.data.password = await createPassword(req.body.data.password);
-              }
-          } else {
-              // ถ้าส่งมาเป็นค่าว่าง (แปลว่าไม่ต้องการเปลี่ยนรหัส) ให้ลบ field password ออก
-              // เพื่อไม่ให้ไปบันทึกค่าว่างทับรหัสเดิม
-              delete req.body.data.password;
-          }
+      if (req.body.data.password) {
+        req.body.data.password = await createPassword(req.body.data.password);
       }
 
-      dbase.updateDocument({
+      const response = await db.createDocument({
         collection: req.body.collection,
-        query: JSON.stringify({ _id: req.body.data._id}),
         data: JSON.stringify(req.body.data),
-      }, (err, resp) => {
-
-        console.log(err, resp)
-
-        if (resp)  return res.json(JSON.parse(resp.data))
-        else return res.json([])
-
       });
 
-    })() // เรียกใช้งาน async wrapper
-  });
-  // -------------------
-
-  router.post('/deleteDocument', passport.authenticate('jwt', { session: false }), function(req, res) {
-    console.log('/deleteDocument ->', req.body);
-
-    dbase.deleteDocument({
-      collection: req.body.collection,
-      query: JSON.stringify(req.body.query),
-    }, (err, resp) => {
-
-      console.log(err, resp)
-
-      if (resp)  return res.json(JSON.parse(resp.data))
-      else return res.json([])
-
-    });  
-
+      const data = JSON.parse(response.data);
+      return res.json(data);
+    } catch (error) {
+      console.error('Create Document Error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
   });
 
-  router.post('/dropDatabase', passport.authenticate('jwt', { session: false }), function(req, res) {
-    console.log('/dropDatabase ->', req.body, );
-    // await dropDatabase(req.body);
-    dbase.dropDatabase(req.body, (err, resp) => {
+  router.post('/readDocument', authMiddleware, async function(req, res) {
+    try {
+      console.log('/readDocument ->', req.body);
+
+      const response = await db.readDocument({
+        collection: req.body.collection,
+        query: JSON.stringify(req.body.query),
+      });
+
+      const data = JSON.parse(response.data);
+      return res.json(data);
+    } catch (error) {
+      console.error('Read Document Error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+    
+  router.post('/updateDocument', authMiddleware, async function(req, res) {
+    try {
+      console.log('/updateDocument ->', req.body);
+
+      if (req.body.collection === 'User') {
+        if (req.body.data.password && req.body.data.password !== '') {
+          if (!req.body.data.password.startsWith('$2')) {
+            req.body.data.password = await createPassword(req.body.data.password);
+          }
+        } else {
+          delete req.body.data.password;
+        }
+      }
+
+      const response = await db.updateDocument({
+        collection: req.body.collection,
+        query: JSON.stringify({ _id: req.body.data._id }),
+        data: JSON.stringify(req.body.data),
+      });
+
+      const data = JSON.parse(response.data);
+      return res.json(data);
+    } catch (error) {
+      console.error('Update Document Error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.post('/deleteDocument', authMiddleware, async function(req, res) {
+    try {
+      console.log('/deleteDocument ->', req.body);
+
+      const response = await db.deleteDocument({
+        collection: req.body.collection,
+        query: JSON.stringify(req.body.query),
+      });
+
+      const data = JSON.parse(response.data);
+      return res.json(data);
+    } catch (error) {
+      console.error('Delete Document Error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.post('/dropDatabase', authMiddleware, async function(req, res) {
+    try {
+      console.log('/dropDatabase ->', req.body);
+      await db.dropDatabase(req.body);
       return res.json({ status: true });
-    })
+    } catch (error) {
+      console.error('Drop Database Error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
   });
 
-  router.post('/dropCollection', passport.authenticate('jwt', { session: false }), function(req, res) {
-    console.log('/dropCollection ->', req.body, );
-    dbase.dropCollection(req.body, (err, resp) => {  // { baseName: temp[0].siteID, collection: 'devices' }
+  router.post('/dropCollection', authMiddleware, async function(req, res) {
+    try {
+      console.log('/dropCollection ->', req.body);
+      await db.dropCollection(req.body);
       return res.json({ status: true });
-    });   
+    } catch (error) {
+      console.error('Drop Collection Error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // New endpoint for executing scripts
+  router.post('/executeScript', authMiddleware, async function(req, res) {
+    try {
+      console.log('/executeScript ->', req.body);
+      
+      const { code } = req.body;
+      if (!code) {
+        return res.status(400).json({ error: 'Code is required' });
+      }
+
+      const result = await executeScript(code);
+      return res.json(result);
+    } catch (error) {
+      console.error('Execute Script Error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
   });
 
 }

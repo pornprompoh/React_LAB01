@@ -23,15 +23,6 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 const CHART_COLORS = ['#1976d2', '#4caf50', '#ff9800', '#9c27b0', '#f44336', '#00bcd4', '#795548', '#607d8b'];
 
-const jsexe = async (code) => {
-  try {
-    const func = new Function(`return (${code})`)
-    const result = func()
-    if (result instanceof Promise) return await result
-    return result
-  } catch (error) { throw error }
-}
-
 const getIntervalMs = (intervalStr) => {
   switch(intervalStr) {
     case '1sec': return 1000;
@@ -97,6 +88,40 @@ const DevicePage = () => {
     return auth
   }
 
+  /**
+   * Execute script via backend API (JsExe Service)
+   * Script is executed in isolated backend environment, not in browser
+   */
+  async function executeScriptViaAPI(code) {
+    const auth = getAuth()
+    if (!auth) {
+      throw new Error('Not authenticated')
+    }
+
+    const response = await fetch('/api/preferences/executeScript', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'authorization': auth.token
+      },
+      body: JSON.stringify({ code })
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('API Error:', response.status, errorText)
+      throw new Error(`API Error: ${response.status}`)
+    }
+
+    const result = await response.json()
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Script execution failed')
+    }
+
+    return result.result
+  }
+
   useEffect(() => { tagsRef.current = device.tags }, [device.tags])
 
   // --- [อัปเดตใหม่!] ดึงข้อมูลประวัติจาก Database ของจริง ---
@@ -122,6 +147,12 @@ const DevicePage = () => {
               // ถ้า backend ของคุณรองรับ sort ให้ใส่ไปด้วย หรือเรียงที่ frontend เอา
             })
           });
+
+          if (!resp.ok) {
+            console.error('Fetch history error:', resp.status);
+            setHistoricalChartData([]);
+            return;
+          }
 
           const json = await resp.json();
           if (Array.isArray(json) && json.length > 0) {
@@ -166,7 +197,7 @@ const DevicePage = () => {
 
         if (now - lastRun >= intervalMs) {
           try {
-            const output = await jsexe(tag.script);
+            const output = await executeScriptViaAPI(tag.script);
             newResults[index] = output;
             newErrors[index] = null;
           } catch (err) {
@@ -255,6 +286,11 @@ const DevicePage = () => {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'authorization': auth.token },
           body: JSON.stringify({ collection: collectionName, query: { _id: id } })
         })
+        if (!resp.ok) {
+          console.error('Fetch device error:', resp.status);
+          alert('Failed to load device'); navigate('/dashboard');
+          return;
+        }
         const json = await resp.json()
         if (json && json.length > 0) {
           let loadedDevice = json[0];
@@ -290,7 +326,7 @@ const DevicePage = () => {
     try {
       const code = device.tags[index].script
       if (!code || !code.trim()) return
-      const output = await jsexe(code)
+      const output = await executeScriptViaAPI(code)
       const successResults = { ...tagResultsRef.current, [index]: output };
       setTagResults(successResults); tagResultsRef.current = successResults;
       lastRunTimes.current[index] = Date.now(); 
@@ -332,12 +368,20 @@ const DevicePage = () => {
 
       setSaving(true)
       const auth = getAuth()
+      if (!auth) throw new Error('Not authenticated. Please login again.')
+      
       const url = isCreateMode ? '/api/preferences/createDocument' : '/api/preferences/updateDocument'
       
       const resp = await fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'authorization': auth.token },
         body: JSON.stringify({ collection: collectionName, data: dataToSave })
       })
+      
+      if (!resp.ok) {
+        const errorText = await resp.text()
+        console.error('API Error:', resp.status, errorText)
+        throw new Error(`Server error: ${resp.status} ${errorText}`)
+      }
       
       const json = await resp.json()
       if (json.error) throw new Error(json.error)
@@ -358,12 +402,14 @@ const DevicePage = () => {
     try {
         setSaving(true)
         const auth = getAuth()
-        await fetch('/api/preferences/deleteDocument', {
+        if (!auth) throw new Error('Not authenticated')
+        const resp = await fetch('/api/preferences/deleteDocument', {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'authorization': auth.token },
             body: JSON.stringify({ collection: collectionName, query: { _id: device._id } })
         })
+        if (!resp.ok) throw new Error(`Delete failed: ${resp.status}`)
         navigate('/dashboard')
-    } catch (error) { alert('Delete failed'); setSaving(false) }
+    } catch (error) { alert('Delete failed: ' + error.message); setSaving(false) }
   }
 
   const deleteTag = async (indexToRemove) => {

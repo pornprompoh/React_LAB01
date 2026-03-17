@@ -12,33 +12,51 @@ const { ThrottleGroup } = require("stream-throttle");
 const {
   sleep,
   readcfg,
-  grpcInit,
-  isDbReady,
   createPassword,
 } = require('./common')
 
-let cfg = readcfg(true);
+const db = require('./db')
+const scriptScheduler = require('./libs/scriptScheduler')
 
-const { dbase, } = grpcInit()
+let cfg = readcfg(true);
 
 async function main () {
 
-  const ready = await isDbReady(dbase)
-  if (ready && ready.status)  {
-    console.log('db is ready ->', ready.status)
-  }
-  else  {
-    console.log('db is not ready ->', ready)
+  // Initialize database gRPC client
+  try {
+    await db.grpcInit()
+    console.log('✅ Database client initialized')
+  } catch (error) {
+    console.error('❌ Failed to connect to database:', error.message)
     await sleep(1e3*10)
     main()
     return
+  }
+
+  // Check if database is ready
+  const isReady = await db.isDbReady()
+  if (isReady) {
+    console.log('✅ Database service is ready')
+  } else {
+    console.error('❌ Database service not ready')
+    await sleep(1e3*10)
+    main()
+    return
+  }
+
+  // Initialize script scheduler
+  try {
+    await scriptScheduler.initialize()
+    console.log('✅ Script scheduler initialized')
+  } catch (error) {
+    console.warn('⚠️  Script scheduler initialization error:', error.message)
+    // Don't fail the whole app if scheduler fails
   }
 
   const app = express();
      
   const preferences = require('./routes/preferences').router
   require('./routes/preferences').restInit(
-    dbase, 
     readcfg, 
     createPassword,
   )
@@ -46,10 +64,10 @@ async function main () {
   const privateKey = 'secret'
   
   app.use(passport.initialize());
-  require('./libs/passport')(passport, dbase, privateKey)
+  require('./libs/passport')(passport, privateKey)
 
   const users = require('./routes/users').router;
-  require('./routes/users').userInit(dbase, privateKey ); 
+  require('./routes/users').userInit(privateKey); 
 
   /* Since express 4.16.0, you can also do: */
   app.use(express.json({ limit: '50mb' }));
