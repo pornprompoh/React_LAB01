@@ -1,6 +1,6 @@
 const JWTStrategy = require('passport-jwt').Strategy;
 const ExtractJWT = require('passport-jwt').ExtractJwt;
-const db = require('../db');
+const db = require('../db-client');
 
 const opts = {};
 opts.jwtFromRequest = ExtractJWT.fromAuthHeaderAsBearerToken();

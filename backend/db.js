@@ -1,7 +1,7 @@
 // ========================================
 // Layer 3: Database Service (gRPC Server)
 // Port: 3301
-// Run: npm run db or node db
+// Run: node db
 // ========================================
 
 const grpc = require('@grpc/grpc-js');

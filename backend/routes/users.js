@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const passport = require('passport');
-const db = require('../db');
+const db = require('../db-client');
 
 /**
  * Middleware to handle authentication errors and return JSON

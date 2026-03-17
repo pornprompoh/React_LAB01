@@ -4,7 +4,7 @@
 // ========================================
 
 const { executeScript } = require('./scriptRunner');
-const db = require('../db');
+const db = require('../db-client');
 
 class ScriptScheduler {
   constructor() {
